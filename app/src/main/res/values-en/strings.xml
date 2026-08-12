@@ -92,9 +92,9 @@
     <string name="settings_range_calc_manual">Manual</string>
     <string name="settings_range_calc_method_desc">\"Auto\" uses trip history and live consumption. \"Manual\" uses your own battery-temperature-based consumption table.</string>
     <string name="settings_range_calc_edit_table_button">Consumption table</string>
-    <string name="settings_range_calc_edit_table_desc">5 points: battery temperature → consumption (and optionally range at 100% charge)</string>
+    <string name="settings_range_calc_edit_table_desc" formatted="false">5 points: battery temperature → consumption (and optionally range at 100% charge)</string>
     <string name="range_table_dialog_title">Battery temperature consumption table</string>
-    <string name="range_table_dialog_note1">Consumption (kWh/100km) is required; range at 100% charge is optional, but must be filled in for every row or left empty in all of them.</string>
+    <string name="range_table_dialog_note1" formatted="false">Consumption (kWh/100km) is required; range at 100% charge is optional, but must be filled in for every row or left empty in all of them.</string>
     <string name="range_table_dialog_col_temp">°C</string>
     <string name="range_table_dialog_col_consumption">Consumption, kWh/100km</string>
     <string name="range_table_dialog_col_range">Range, km</string>
@@ -1186,5 +1186,10 @@
     <string name="settings_split_app_not_selected">not selected</string>
     <string name="settings_split_howto_body">There are three ways to turn on split screen.\nThe easiest one: tap the left third of the floating widget. To set that up, turn on Tap zoning in the Widget tap section and pick Launch split screen under Left tap action.\nFrom automations: add the Split Screen action to a rule. Close Split Screen and Toggle Split Screen sit right next to it.\nBy voice: just ask the Voice agent to turn on split screen.</string>
 
+    <string name="settings_split_mechanism_title">Split mechanism</string>
+    <string name="settings_split_mechanism_freeform">BYDMate windows</string>
+    <string name="settings_split_mechanism_native">Native split</string>
+    <string name="settings_split_mechanism_native_hint">The split is done by the car\'s firmware. The look depends on the firmware: either two panes at one-third and two-thirds, or half and half with the second app picked on screen.</string>
+    <string name="settings_split_try_native_hint">Try the Native split mode.</string>
     <string name="split_feature_disabled">Split screen is disabled in settings</string>
 </resources>
