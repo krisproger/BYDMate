@@ -47,6 +47,13 @@ android {
     }
 
     buildTypes {
+        // Test build: separate applicationId (".test") + "-test" versionName so it
+        // can be installed alongside the release APK on the same DiLink (device
+        // stores "com.bydmate.app.test", data/WorkManager/FileProvider fully isolated).
+        debug {
+            applicationIdSuffix = ".test"
+            versionNameSuffix = "-test"
+        }
         release {
             signingConfig = signingConfigs.findByName("release")
             isMinifyEnabled = true

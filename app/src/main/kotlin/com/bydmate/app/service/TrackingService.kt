@@ -89,6 +89,7 @@ class TrackingService : Service(), LocationListener {
     @Inject lateinit var iternioTelemetryClient: IternioTelemetryClient
     @Inject lateinit var lastSessionRepository: com.bydmate.app.data.repository.LastSessionRepository
     @Inject lateinit var sharedAdaptiveLoop: com.bydmate.app.data.loop.SharedAdaptiveLoop
+    @Inject lateinit var haPublisher: com.bydmate.app.ha.HaPublisher
     @Inject lateinit var tripRecorder: com.bydmate.app.data.trips.TripRecorder
     @Inject lateinit var helperBootstrap: com.bydmate.app.data.vehicle.HelperBootstrap
     @Inject lateinit var helperClient: com.bydmate.app.data.vehicle.HelperClient
@@ -614,6 +615,14 @@ class TrackingService : Service(), LocationListener {
             if (enabled) alicePollingManager.start()
         }
 
+        // HA-телеметрия (diplus2hass): стартует, если включено в настройках.
+        serviceScope.launch {
+            val enabled = settingsRepository.getString(
+                com.bydmate.app.data.repository.SettingsRepository.KEY_HA_ENABLED, "false"
+            ) == "true"
+            if (enabled) haPublisher.start()
+        }
+
         // v2.0: event-based sync on service start
         serviceScope.launch {
             try {
@@ -952,6 +961,7 @@ class TrackingService : Service(), LocationListener {
         }
 
         alicePollingManager.stop()
+        haPublisher.stop()
         fidSubscriptionManager.stop()
         blindSpotController.stop()
         cameraStateMonitor.stop()
@@ -1018,6 +1028,7 @@ class TrackingService : Service(), LocationListener {
 
     override fun onLocationChanged(location: Location) {
         _lastLocation.value = location
+        haPublisher.latestLocation = location
         // AC-06: never log raw coordinates in release — logcat is readable on DiLink
         // and ends up in user-shared diagnostic dumps.
         if (BuildConfig.DEBUG) {
@@ -1297,7 +1308,7 @@ class TrackingService : Service(), LocationListener {
         serviceScope.launch {
             try {
                 if (adbOnDeviceClient.connect().isSuccess) {
-                    val granted = adbOnDeviceClient.grantUsageStatsAppop("com.bydmate.app")
+                    val granted = adbOnDeviceClient.grantUsageStatsAppop(packageName)
                     Log.i(TAG, "GET_USAGE_STATS appop grant: $granted")
                 } else {
                     Log.w(TAG, "ADB connect refused — camera detection may be inactive until appop is granted manually")

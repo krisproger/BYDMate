@@ -2639,6 +2639,54 @@ private fun SmartHomeSection(state: SettingsUiState, viewModel: SettingsViewMode
             SettingHint("Polling опрашивает Worker каждую секунду\nи выполняет команды через D+ API")
         }
     }
+
+    Card(
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(containerColor = CardSurfaceElevated),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(
+            modifier = Modifier.padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            SettingToggleRow(
+                title = "HA-телеметрия",
+                description = "Отправка состояния авто в diplus2hass",
+                checked = state.haEnabled,
+                onCheckedChange = { viewModel.toggleHa(it) },
+            )
+            SettingsTextField(
+                label = "URL Home Assistant",
+                value = state.haUrl,
+                onValueChange = { viewModel.updateHaUrl(it) },
+                keyboardType = KeyboardType.Uri
+            )
+            SettingsTextField(
+                label = "Long-Lived Access Token",
+                value = state.haToken,
+                onValueChange = { viewModel.updateHaToken(it) },
+                keyboardType = KeyboardType.Password,
+                secret = true
+            )
+            SettingsTextField(
+                label = "Имя автомобиля (car_name)",
+                value = state.haCarName,
+                onValueChange = { viewModel.updateHaCarName(it) },
+                keyboardType = KeyboardType.Text
+            )
+            SettingActionRow(
+                title = "Сохранить",
+                buttonLabel = "Сохранить",
+                onClick = { viewModel.saveHaSettings() },
+                style = SettingButtonStyle.Primary,
+                enabled = state.haUrl.isNotBlank() && state.haToken.isNotBlank() && state.haCarName.isNotBlank(),
+            )
+            state.haSaveStatus?.let {
+                Text(it, color = AccentGreen, fontSize = 12.sp)
+            }
+            SettingHint("Снапшоты телеметрии отправляются в\n/api/byd_diplus и принимаются сенсором diplus2hass")
+        }
+    }
 }
 
 @Composable

@@ -126,6 +126,11 @@ data class SettingsUiState(
     val aliceApiKey: String = "",
     val aliceEnabled: Boolean = false,
     val aliceSaveStatus: String? = null,
+    val haEnabled: Boolean = false,
+    val haUrl: String = "",
+    val haToken: String = "",
+    val haCarName: String = "",
+    val haSaveStatus: String? = null,
     val autoCheckUpdates: Boolean = true,
     val abrpTelemetryEnabled: Boolean = false,
     val abrpApiKey: String = "",
@@ -338,6 +343,10 @@ class SettingsViewModel @Inject constructor(
             val aliceEndpoint = settingsRepository.getString(SettingsRepository.KEY_ALICE_ENDPOINT, "")
             val aliceApiKey = settingsRepository.getString(SettingsRepository.KEY_ALICE_API_KEY, "")
             val aliceEnabled = settingsRepository.getString(SettingsRepository.KEY_ALICE_ENABLED, "false") == "true"
+            val haEnabled = settingsRepository.getString(SettingsRepository.KEY_HA_ENABLED, "false") == "true"
+            val haUrl = settingsRepository.getString(SettingsRepository.KEY_HA_URL, "")
+            val haToken = settingsRepository.getString(SettingsRepository.KEY_HA_TOKEN, "")
+            val haCarName = settingsRepository.getString(SettingsRepository.KEY_HA_CAR_NAME, "")
 
             val abrpEnabled = settingsRepository.getString(SettingsRepository.KEY_ABRP_ENABLED, "false") == "true"
             val abrpApiKey = settingsRepository.getString(SettingsRepository.KEY_ABRP_API_KEY, "")
@@ -421,6 +430,10 @@ class SettingsViewModel @Inject constructor(
                     aliceEndpoint = aliceEndpoint,
                     aliceApiKey = aliceApiKey,
                     aliceEnabled = aliceEnabled,
+                    haEnabled = haEnabled,
+                    haUrl = haUrl,
+                    haToken = haToken,
+                    haCarName = haCarName,
                     abrpTelemetryEnabled = abrpEnabled,
                     abrpApiKey = abrpApiKey,
                     abrpUserToken = abrpUserToken,
@@ -988,6 +1001,39 @@ class SettingsViewModel @Inject constructor(
         _uiState.update { it.copy(aliceEnabled = enabled) }
         viewModelScope.launch {
             settingsRepository.setString(SettingsRepository.KEY_ALICE_ENABLED, enabled.toString())
+        }
+    }
+
+    fun updateHaUrl(value: String) {
+        _uiState.update { it.copy(haUrl = value) }
+    }
+
+    fun updateHaToken(value: String) {
+        _uiState.update { it.copy(haToken = value) }
+    }
+
+    fun updateHaCarName(value: String) {
+        _uiState.update { it.copy(haCarName = value) }
+    }
+
+    fun saveHaSettings() {
+        val state = _uiState.value
+        viewModelScope.launch {
+            settingsRepository.setString(SettingsRepository.KEY_HA_URL, state.haUrl.trim())
+            settingsRepository.setString(SettingsRepository.KEY_HA_TOKEN, state.haToken.trim())
+            settingsRepository.setString(SettingsRepository.KEY_HA_CAR_NAME, state.haCarName.trim())
+            val enabled = state.haUrl.isNotBlank() && state.haToken.isNotBlank() && state.haCarName.isNotBlank()
+            settingsRepository.setString(SettingsRepository.KEY_HA_ENABLED, enabled.toString())
+            _uiState.update { it.copy(haEnabled = enabled, haSaveStatus = appContext.getString(R.string.settings_saved)) }
+            delay(2000)
+            _uiState.update { it.copy(haSaveStatus = null) }
+        }
+    }
+
+    fun toggleHa(enabled: Boolean) {
+        _uiState.update { it.copy(haEnabled = enabled) }
+        viewModelScope.launch {
+            settingsRepository.setString(SettingsRepository.KEY_HA_ENABLED, enabled.toString())
         }
     }
 

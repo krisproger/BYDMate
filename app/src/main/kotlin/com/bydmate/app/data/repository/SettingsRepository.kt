@@ -63,6 +63,14 @@ open class SettingsRepository @Inject constructor(
         const val KEY_ALICE_ENDPOINT = "alice_endpoint"
         const val KEY_ALICE_API_KEY = "alice_api_key"
         const val KEY_ALICE_ENABLED = "alice_enabled"
+        /** Отправлять телеметрию DiParsData в Home Assistant (custom component diplus2hass, POST /api/byd_diplus). */
+        const val KEY_HA_ENABLED = "ha_enabled"
+        /** Базовый URL HA без trailing slash, например `http://192.168.1.10:8123`. */
+        const val KEY_HA_URL = "ha_url"
+        /** Long-lived access token HA (Authorization: Bearer). */
+        const val KEY_HA_TOKEN = "ha_token"
+        /** car_name, под которым зарегистрирован entry в HA (должен совпадать с конфигом diplus2hass). */
+        const val KEY_HA_CAR_NAME = "ha_car_name"
         /** Передавать живые данные DiPars в A Better Route Planner (Iternio Telemetry API). GPS передаётся только если включён KEY_ABRP_SEND_LOCATION. */
         const val KEY_ABRP_ENABLED = "abrp_telemetry_enabled"
         /** API-ключ приложения Iternio ([abetterrouteplanner.com/resources/api](https://abetterrouteplanner.com/resources/api)). */
