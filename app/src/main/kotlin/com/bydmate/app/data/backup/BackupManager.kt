@@ -228,6 +228,18 @@ class BackupManager(
             "Файл бэкапа повреждён или неполный. Ожидались записи: $ENTRY_DB, $ENTRY_PREFS, $ENTRY_MANIFEST"
         )
 
+        /**
+         * Returns BYDMate backup zips (bydmate_backup_*.zip) in [dir], newest first.
+         * Stable order for files with equal lastModified. Non-existent/non-dir -> empty.
+         */
+        fun listBackupsInDownloads(dir: java.io.File): List<java.io.File> {
+            if (!dir.exists() || !dir.isDirectory) return emptyList()
+            return dir.listFiles()
+                .orEmpty()
+                .filter { it.isFile && it.name.startsWith("bydmate_backup_") && it.name.endsWith(".zip") }
+                .sortedWith(compareByDescending<java.io.File> { it.lastModified() }.thenBy { it.name })
+        }
+
         /** Read the current zip entry, failing fast once [limit] bytes are exceeded. */
         private fun readEntryBounded(zip: ZipInputStream, limit: Long): ByteArray {
             val out = java.io.ByteArrayOutputStream()
