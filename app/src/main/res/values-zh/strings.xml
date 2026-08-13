@@ -778,6 +778,9 @@
     <string name="settings_config_export_confirm_title">导出配置？</string>
     <string name="settings_config_export_confirm_body">备份包含带 GPS 路线的行程历史以及未加密的 API 密钥。文件将保存到公共 Download 文件夹。请妥善保管，不要转发给他人。</string>
     <string name="settings_config_export_confirm_ok">导出</string>
+    <string name="settings_config_download_backup_dialog_title">下载文件夹中的备份</string>
+    <string name="settings_config_download_backup_dialog_cancel">取消</string>
+    <string name="settings_config_download_backup_dialog_empty">在下载文件夹中未找到 BYDMate 备份</string>
     <!-- Fid catalog dump (Task O) -->
     <string name="settings_fid_dump_button">保存 fid 目录</string>
     <string name="settings_fid_dump_desc">SDK 常量的名称和数值。仅技术标识符：不含 VIN，不含定位，不含个人数据</string>

@@ -840,6 +840,9 @@
     <string name="settings_config_export_confirm_title">Экспартаваць канфігурацыю?</string>
     <string name="settings_config_export_confirm_body">Бэкап змяшчае гісторыю паездак з GPS-маршрутамі і ўведзеныя API-ключы ў незашыфраваным выглядзе. Файл будзе захаваны ў агульнадаступную папку Download. Захоўвайце яго ў надзейным месцы і не перасылайце староннім.</string>
     <string name="settings_config_export_confirm_ok">Экспартаваць</string>
+    <string name="settings_config_download_backup_dialog_title">Бэкапы ў папцы Download</string>
+    <string name="settings_config_download_backup_dialog_cancel">Адмена</string>
+    <string name="settings_config_download_backup_dialog_empty">У папцы Download не знойдзена бэкапаў BYDMate</string>
     <!-- Fid catalog dump (Task O) -->
     <string name="settings_fid_dump_button">Захаваць каталог fid\'аў</string>
     <string name="settings_fid_dump_desc">Імёны і значэнні канстант SDK. Толькі тэхнічныя ідэнтыфікатары: без VIN, без геалакацыі, без асабістых даных</string>

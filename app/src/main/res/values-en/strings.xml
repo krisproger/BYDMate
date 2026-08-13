@@ -689,6 +689,9 @@
     <string name="settings_config_export_confirm_title">Export configuration?</string>
     <string name="settings_config_export_confirm_body">The backup contains your trip history with GPS routes and your API keys in plain text. The file is saved to the public Download folder. Keep it somewhere safe and do not share it.</string>
     <string name="settings_config_export_confirm_ok">Export</string>
+    <string name="settings_config_download_backup_dialog_title">Backups in Download folder</string>
+    <string name="settings_config_download_backup_dialog_cancel">Cancel</string>
+    <string name="settings_config_download_backup_dialog_empty">No BYDMate backups found in Download folder</string>
     <!-- Fid catalog dump (Task O) -->
     <string name="settings_fid_dump_button">Save fid catalog</string>
     <string name="settings_fid_dump_desc">SDK constant names and values. Technical identifiers only: no VIN, no location, no personal data</string>

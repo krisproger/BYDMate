@@ -840,6 +840,9 @@
     <string name="settings_config_export_confirm_title">Wyeksportować konfigurację?</string>
     <string name="settings_config_export_confirm_body">Kopia zawiera historię przejazdów z trasami GPS oraz wpisane klucze API w postaci niezaszyfrowanej. Plik trafi do ogólnodostępnego folderu Download. Trzymaj go w bezpiecznym miejscu i nie przesyłaj osobom postronnym.</string>
     <string name="settings_config_export_confirm_ok">Eksportuj</string>
+    <string name="settings_config_download_backup_dialog_title">Kopie zapasowe w folderze Download</string>
+    <string name="settings_config_download_backup_dialog_cancel">Anuluj</string>
+    <string name="settings_config_download_backup_dialog_empty">Nie znaleziono kopii zapasowych BYDMate w folderze Download</string>
     <!-- Fid catalog dump (Task O) -->
     <string name="settings_fid_dump_button">Zapisz katalog fidów</string>
     <string name="settings_fid_dump_desc">Nazwy i wartości stałych SDK. Tylko identyfikatory techniczne: bez VIN, bez geolokalizacji, bez danych osobowych</string>
