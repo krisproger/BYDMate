@@ -148,6 +148,12 @@ private enum class SettingsSection(@StringRes val labelRes: Int, val icon: Image
     SMART_HOME(R.string.settings_smart_home_section_title, Icons.Outlined.Home),
 }
 
+/** Source of a pending restore: SAF picker (launches picker) or a concrete file. */
+private sealed interface RestoreSource {
+    data object Saf : RestoreSource
+    data class File(val file: java.io.File) : RestoreSource
+}
+
 private val PrimaryColor = AccentGreen
 
 @Composable
@@ -244,20 +250,13 @@ fun SettingsScreen(
         Spacer(modifier = Modifier.height(12.dp))
 
         var selected by rememberSaveable { mutableStateOf(SettingsSection.VOICE) }
-        val hiddenSelected = selected == SettingsSection.SMART_HOME
-        val safeSelected = if (hiddenSelected && !state.devModeUnlocked) {
-            SettingsSection.VOICE
-        } else {
-            selected
-        }
 
         Row(
             modifier = Modifier.weight(1f).fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             SettingsRail(
-                selected = safeSelected,
-                smartHomeUnlocked = state.devModeUnlocked,
+                selected = selected,
                 appVersion = state.appVersion,
                 onSelect = { selected = it },
                 onVersionTap = { viewModel.onVersionTap() },
@@ -275,7 +274,7 @@ fun SettingsScreen(
                         .verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
-                    when (safeSelected) {
+                    when (selected) {
                         SettingsSection.BATTERY -> BatterySection(state, viewModel)
                         SettingsSection.INTEGRATIONS -> IntegrationsSection(state, viewModel)
                         SettingsSection.VOICE -> VoiceSettingsContent(state, viewModel, onNavigateToVoiceJournal, onNavigateToAgentChat)
@@ -296,7 +295,6 @@ fun SettingsScreen(
 @Composable
 private fun SettingsRail(
     selected: SettingsSection,
-    smartHomeUnlocked: Boolean,
     appVersion: String,
     onSelect: (SettingsSection) -> Unit,
     onVersionTap: () -> Unit,
@@ -316,18 +314,21 @@ private fun SettingsRail(
                 modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
             )
 
-            SettingsSection.entries.forEach { section ->
-                val isHidden = section == SettingsSection.SMART_HOME
-                if (isHidden && !smartHomeUnlocked) return@forEach
-                RailItem(
-                    section = section,
-                    isActive = section == selected,
-                    isHidden = isHidden,
-                    onClick = { onSelect(section) },
-                )
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .verticalScroll(rememberScrollState()),
+            ) {
+                SettingsSection.entries.forEach { section ->
+                    RailItem(
+                        section = section,
+                        isActive = section == selected,
+                        isHidden = false,
+                        onClick = { onSelect(section) },
+                    )
+                }
             }
 
-            Spacer(modifier = Modifier.weight(1f))
             HorizontalDivider(color = CardBorder)
             Row(
                 modifier = Modifier
@@ -1755,11 +1756,15 @@ private fun ServiceSection(
     }
     var showRestoreConfirm by remember { mutableStateOf(false) }
     var showExportConfirm by remember { mutableStateOf(false) }
+    var pendingRestoreSource by remember { mutableStateOf<RestoreSource?>(null) }
 
     // Confirm dialog for destructive restore operation
     if (showRestoreConfirm) {
         AlertDialog(
-            onDismissRequest = { showRestoreConfirm = false },
+            onDismissRequest = {
+                showRestoreConfirm = false
+                pendingRestoreSource = null
+            },
             title = {
                 Text(
                     stringResource(R.string.settings_config_restore_confirm_title),
@@ -1774,8 +1779,14 @@ private fun ServiceSection(
             },
             confirmButton = {
                 TextButton(onClick = {
+                    val source = pendingRestoreSource
                     showRestoreConfirm = false
-                    restoreLauncher.launch(arrayOf("application/zip"))
+                    pendingRestoreSource = null
+                    when (source) {
+                        is RestoreSource.Saf -> restoreLauncher.launch(arrayOf("application/zip"))
+                        is RestoreSource.File -> viewModel.restoreFromDownload(source.file)
+                        null -> Unit
+                    }
                 }) {
                     Text(
                         stringResource(R.string.settings_config_restore_confirm_ok),
@@ -1784,9 +1795,66 @@ private fun ServiceSection(
                 }
             },
             dismissButton = {
-                TextButton(onClick = { showRestoreConfirm = false }) {
+                TextButton(onClick = {
+                    showRestoreConfirm = false
+                    pendingRestoreSource = null
+                }) {
                     Text(
                         stringResource(R.string.settings_config_restore_confirm_cancel),
+                        color = TextSecondary,
+                    )
+                }
+            },
+            containerColor = CardSurfaceElevated,
+        )
+    }
+
+    // Fallback picker: backups found in Downloads (shown when SAF restore failed).
+    if (state.showDownloadBackupPicker && state.downloadBackups.isNotEmpty()) {
+        AlertDialog(
+            onDismissRequest = { viewModel.dismissDownloadBackupPicker() },
+            title = {
+                Text(
+                    stringResource(R.string.settings_config_download_backup_dialog_title),
+                    color = TextPrimary,
+                )
+            },
+            text = {
+                Column {
+                    state.downloadBackups.forEach { file ->
+                        Text(
+                            text = file.name,
+                            color = TextPrimary,
+                            fontSize = 14.sp,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    viewModel.dismissDownloadBackupPicker()
+                                    pendingRestoreSource = RestoreSource.File(file)
+                                    showRestoreConfirm = true
+                                }
+                                .padding(vertical = 8.dp),
+                        )
+                        val size = file.length()
+                        val sizeText = if (size > 1024 * 1024) {
+                            "%.1f МБ".format(size / (1024.0 * 1024.0))
+                        } else if (size > 1024) {
+                            "%.0f КБ".format(size / 1024.0)
+                        } else {
+                            "$size Б"
+                        }
+                        Text(
+                            text = "${java.text.SimpleDateFormat("dd.MM.yyyy HH:mm", java.util.Locale.getDefault()).format(java.util.Date(file.lastModified()))} · $sizeText",
+                            color = TextMuted,
+                            fontSize = 11.sp,
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { viewModel.dismissDownloadBackupPicker() }) {
+                    Text(
+                        stringResource(R.string.settings_config_download_backup_dialog_cancel),
                         color = TextSecondary,
                     )
                 }
@@ -1906,7 +1974,10 @@ private fun ServiceSection(
                 title = stringResource(R.string.settings_config_restore_button),
                 description = stringResource(R.string.settings_config_restore_desc),
                 buttonLabel = stringResource(R.string.settings_config_restore_button),
-                onClick = { showRestoreConfirm = true },
+                onClick = {
+                    pendingRestoreSource = RestoreSource.Saf
+                    showRestoreConfirm = true
+                },
             )
             if (state.configStatus != null) {
                 SettingHint(
@@ -2626,99 +2697,6 @@ private fun OnlineTtsVoiceRow(
 
 
 @Composable
-private fun SmartHomeSection(state: SettingsUiState, viewModel: SettingsViewModel) {
-    SectionHeader(text = "Умный дом")
-    Card(
-        shape = RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(containerColor = CardSurfaceElevated),
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        Column(
-            modifier = Modifier.padding(12.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            SettingToggleRow(
-                title = "Polling",
-                checked = state.aliceEnabled,
-                onCheckedChange = { viewModel.toggleAlice(it) },
-            )
-            SettingsTextField(
-                label = "Endpoint URL",
-                value = state.aliceEndpoint,
-                onValueChange = { viewModel.updateAliceEndpoint(it) },
-                keyboardType = KeyboardType.Uri
-            )
-            SettingsTextField(
-                label = "API Key",
-                value = state.aliceApiKey,
-                onValueChange = { viewModel.updateAliceApiKey(it) },
-                keyboardType = KeyboardType.Password,
-                secret = true
-            )
-            SettingActionRow(
-                title = "Сохранить",
-                buttonLabel = "Сохранить",
-                onClick = { viewModel.saveAliceSettings() },
-                style = SettingButtonStyle.Primary,
-                enabled = state.aliceEndpoint.isNotBlank() && state.aliceApiKey.isNotBlank(),
-            )
-            state.aliceSaveStatus?.let {
-                Text(it, color = AccentGreen, fontSize = 12.sp)
-            }
-            SettingHint("Polling опрашивает Worker каждую секунду\nи выполняет команды через D+ API")
-        }
-    }
-
-    Card(
-        shape = RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(containerColor = CardSurfaceElevated),
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        Column(
-            modifier = Modifier.padding(12.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            SettingToggleRow(
-                title = "HA-телеметрия",
-                description = "Отправка состояния авто в diplus2hass",
-                checked = state.haEnabled,
-                onCheckedChange = { viewModel.toggleHa(it) },
-            )
-            SettingsTextField(
-                label = "URL Home Assistant",
-                value = state.haUrl,
-                onValueChange = { viewModel.updateHaUrl(it) },
-                keyboardType = KeyboardType.Uri
-            )
-            SettingsTextField(
-                label = "Long-Lived Access Token",
-                value = state.haToken,
-                onValueChange = { viewModel.updateHaToken(it) },
-                keyboardType = KeyboardType.Password,
-                secret = true
-            )
-            SettingsTextField(
-                label = "Имя автомобиля (car_name)",
-                value = state.haCarName,
-                onValueChange = { viewModel.updateHaCarName(it) },
-                keyboardType = KeyboardType.Text
-            )
-            SettingActionRow(
-                title = "Сохранить",
-                buttonLabel = "Сохранить",
-                onClick = { viewModel.saveHaSettings() },
-                style = SettingButtonStyle.Primary,
-                enabled = state.haUrl.isNotBlank() && state.haToken.isNotBlank() && state.haCarName.isNotBlank(),
-            )
-            state.haSaveStatus?.let {
-                Text(it, color = AccentGreen, fontSize = 12.sp)
-            }
-            SettingHint("Снапшоты телеметрии отправляются в\n/api/byd_diplus и принимаются сенсором diplus2hass")
-        }
-    }
-}
-
-@Composable
 private fun LanguageBlock(
     currentLang: String,
     onLanguageChange: (String) -> Unit
@@ -2917,7 +2895,7 @@ private fun SearchStatusCard(state: SettingsUiState) {
 }
 
 @Composable
-private fun SectionHeader(text: String, onHelp: (() -> Unit)? = null) {
+internal fun SectionHeader(text: String, onHelp: (() -> Unit)? = null) {
     Row(
         modifier = Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
@@ -2935,7 +2913,7 @@ private fun SectionHeader(text: String, onHelp: (() -> Unit)? = null) {
 }
 
 @Composable
-private fun SettingsTextField(
+internal fun SettingsTextField(
     label: String,
     value: String,
     onValueChange: (String) -> Unit,
