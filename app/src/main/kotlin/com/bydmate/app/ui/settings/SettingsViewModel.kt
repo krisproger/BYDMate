@@ -142,6 +142,10 @@ data class SettingsUiState(
     val configStatus: String? = null,
     /** Status of the last fid-catalog dump. Null = idle. Red if starts with error prefix. */
     val fidDumpStatus: String? = null,
+    /** Backups found in Downloads for the fallback restore picker. */
+    val downloadBackups: List<File> = emptyList(),
+    /** True while the Download-backup picker dialog is shown. */
+    val showDownloadBackupPicker: Boolean = false,
     val mapTileSource: String = SettingsRepository.DEFAULT_MAP_TILE_SOURCE,
     // Voice settings
     val voiceEnabled: Boolean = false,
@@ -1994,12 +1998,44 @@ class SettingsViewModel @Inject constructor(
             try {
                 backupManager.restore(uri)
                 restartApp()
+            } catch (e: SecurityException) {
+                tryDownloadFallback(e)
+            } catch (e: java.io.FileNotFoundException) {
+                tryDownloadFallback(e)
+            } catch (e: IllegalArgumentException) {
+                tryDownloadFallback(e)
             } catch (e: Exception) {
                 _uiState.update {
                     it.copy(configStatus = appContext.getString(R.string.settings_error_with_message, e.message ?: "?"))
                 }
             }
         }
+    }
+
+    /**
+     * If reading the picked SAF URI gave a permission/IO error, offer the backups
+     * found in Downloads (bydmate_backup_*.zip) as a fallback picker.
+     */
+    private fun tryDownloadFallback(cause: Exception) {
+        val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+        val backups = BackupManager.listBackupsInDownloads(downloadsDir)
+        if (backups.isEmpty()) {
+            _uiState.update {
+                it.copy(configStatus = appContext.getString(R.string.settings_error_with_message, cause.message ?: "?"))
+            }
+        } else {
+            _uiState.update { it.copy(downloadBackups = backups, showDownloadBackupPicker = true) }
+        }
+    }
+
+    /** Restore a backup file chosen from the Downloads picker via the standard Uri path. */
+    fun restoreFromDownload(file: File) {
+        restoreConfig(Uri.fromFile(file))
+    }
+
+    /** Dismiss the Download backup picker dialog. */
+    fun dismissDownloadBackupPicker() {
+        _uiState.update { it.copy(showDownloadBackupPicker = false) }
     }
 
     /** Dismiss the config backup/restore status message. */
