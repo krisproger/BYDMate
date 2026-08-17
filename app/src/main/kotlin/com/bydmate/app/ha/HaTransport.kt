@@ -63,10 +63,13 @@ class HaTransport @Inject constructor(
         carName: String,
     ): Result<Unit> = withContext(Dispatchers.IO) {
         if (batch.isEmpty()) return@withContext Result.success(Unit)
-        val baseUrl = settingsRepository.getString(SettingsRepository.KEY_HA_URL, "").trim()
+        val host = settingsRepository.getHaHost()
+        val port = settingsRepository.getHaPort()
+        val https = settingsRepository.isHaHttps()
+        val baseUrl = HaEndpoint.buildBaseUrl(if (https) "https" else "http", host, port)
         val token = settingsRepository.getString(SettingsRepository.KEY_HA_TOKEN, "").trim()
-        if (baseUrl.isBlank() || token.isBlank() || carName.isBlank()) {
-            HaLog.append(context, "skip: неполная конфигурация (url/token/car_name)")
+        if (baseUrl == null || token.isBlank() || carName.isBlank()) {
+            HaLog.append(context, "skip: неполная конфигурация (host/port/token/car_name)")
             return@withContext Result.failure(IllegalStateException("неполная конфигурация HA"))
         }
         if (isCoolingDown) {
