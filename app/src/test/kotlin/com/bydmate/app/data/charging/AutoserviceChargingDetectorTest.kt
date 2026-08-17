@@ -106,6 +106,7 @@ class AutoserviceChargingDetectorTest {
         }
         override fun getAll(): Flow<List<com.bydmate.app.data.local.entity.SettingEntity>> =
             flowOf(emptyList())
+        override suspend fun delete(key: String) { map.remove(key) }
     }
 
     private class FakeParsReader(

@@ -67,6 +67,12 @@ open class SettingsRepository @Inject constructor(
         const val KEY_HA_ENABLED = "ha_enabled"
         /** Базовый URL HA без trailing slash, например `http://192.168.1.10:8123`. */
         const val KEY_HA_URL = "ha_url"
+        /** Хост HA (без схемы и порта), например `192.168.1.10`. */
+        const val KEY_HA_HOST = "ha_host"
+        /** Порт HA, строка числа, например `8123`. */
+        const val KEY_HA_PORT = "ha_port"
+        /** "true" = https, иначе http. */
+        const val KEY_HA_HTTPS = "ha_https"
         /** Long-lived access token HA (Authorization: Bearer). */
         const val KEY_HA_TOKEN = "ha_token"
         /** car_name, под которым зарегистрирован entry в HA (должен совпадать с конфигом diplus2hass). */
@@ -189,6 +195,33 @@ open class SettingsRepository @Inject constructor(
     /** Writes all key/value pairs in one Room transaction (all or nothing). */
     suspend fun setStrings(values: Map<String, String>) =
         settingsDao.setAll(values.map { (k, v) -> SettingEntity(k, v) })
+
+    suspend fun getHaHost(): String = getString(KEY_HA_HOST, "").trim()
+
+    suspend fun getHaPort(): Int =
+        getString(KEY_HA_PORT, "").trim().toIntOrNull() ?: com.bydmate.app.ha.HaEndpoint.DEFAULT_PORT
+
+    suspend fun isHaHttps(): Boolean = getString(KEY_HA_HTTPS, "false") == "true"
+
+    suspend fun saveHaEndpoint(host: String, port: Int, https: Boolean) =
+        setStrings(mapOf(
+            KEY_HA_HOST to host.trim(),
+            KEY_HA_PORT to port.toString(),
+            KEY_HA_HTTPS to https.toString(),
+        ))
+
+    /**
+     * Перенос legacy `ha_url` (единая строка) в раздельные ключи host/port/https.
+     * Вызывается при чтении настроек. Нет старых данных или уже есть host — no-op.
+     */
+    suspend fun migrateLegacyHaUrlIfNeeded() {
+        if (getHaHost().isNotEmpty()) return
+        val legacy = getString(KEY_HA_URL, "").trim()
+        if (legacy.isEmpty()) return
+        val parts = com.bydmate.app.ha.HaEndpoint.parseLegacyUrl(legacy) ?: return
+        saveHaEndpoint(parts.host, parts.port, parts.scheme == "https")
+        settingsDao.delete(KEY_HA_URL)
+    }
 
     suspend fun getBatteryCapacity(): Double =
         getString(KEY_BATTERY_CAPACITY, DEFAULT_BATTERY_CAPACITY).parseNumericSetting() ?: 72.9

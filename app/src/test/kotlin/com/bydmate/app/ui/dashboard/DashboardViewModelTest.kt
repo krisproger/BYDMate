@@ -77,6 +77,7 @@ class DashboardViewModelTest {
         override suspend fun set(entity: SettingEntity) { map[entity.key] = entity.value ?: "" }
         override suspend fun setAll(settings: List<SettingEntity>) { settings.forEach { set(it) } }
         override fun getAll(): Flow<List<SettingEntity>> = flowOf(emptyList())
+        override suspend fun delete(key: String) { map.remove(key) }
     }
 
     // --- Stub DAOs ---
