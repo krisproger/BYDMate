@@ -31,7 +31,7 @@ import javax.inject.Singleton
  * блок `g` снапшота только при валидном фиксе.
  *
  * Жизненный цикл: [start]/[stop] дергаются из TrackingService; внутри —
- * собственная CoroutineScope (как у [com.bydmate.app.data.remote.AlicePollingManager]).
+ * собственная CoroutineScope (как у [HaCommandPoller]).
  */
 @Singleton
 class HaPublisher @Inject constructor(

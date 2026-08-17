@@ -27,7 +27,6 @@ import com.bydmate.app.MainActivity
 import com.bydmate.app.R
 import com.bydmate.app.cluster.ClusterProjectionManager
 import com.bydmate.app.data.automation.AutomationEngine
-import com.bydmate.app.data.remote.AlicePollingManager
 import com.bydmate.app.data.nativestack.ParsReader
 import com.bydmate.app.data.remote.DiParsData
 import com.bydmate.app.data.remote.IternioIntervalPolicy
@@ -76,7 +75,7 @@ class TrackingService : Service(), LocationListener {
     @Inject lateinit var insightsManager: com.bydmate.app.data.remote.InsightsManager
     @Inject lateinit var automationEngine: AutomationEngine
     @Inject lateinit var networkAvailableMonitor: com.bydmate.app.data.automation.NetworkAvailableMonitor
-    @Inject lateinit var alicePollingManager: AlicePollingManager
+    @Inject lateinit var haCommandPoller: com.bydmate.app.ha.HaCommandPoller
     @Inject lateinit var odometerBuffer: OdometerConsumptionBuffer
     @Inject lateinit var liveTripBuffer: LiveTripBuffer
     @Inject lateinit var socInterpolator: SocInterpolator
@@ -607,12 +606,12 @@ class TrackingService : Service(), LocationListener {
         _isRunning.value = true
         ChainLog.append(this, "TrackingService fully started")
 
-        // Start Smart Home polling if configured
+        // Команды из HA (diplus2hass): стартует, если включено в настройках.
         serviceScope.launch {
             val enabled = settingsRepository.getString(
-                com.bydmate.app.data.repository.SettingsRepository.KEY_ALICE_ENABLED, "false"
+                com.bydmate.app.data.repository.SettingsRepository.KEY_HA_ENABLED, "false"
             ) == "true"
-            if (enabled) alicePollingManager.start()
+            if (enabled) haCommandPoller.start()
         }
 
         // HA-телеметрия (diplus2hass): стартует, если включено в настройках.
@@ -960,7 +959,7 @@ class TrackingService : Service(), LocationListener {
             }
         }
 
-        alicePollingManager.stop()
+        haCommandPoller.stop()
         haPublisher.stop()
         fidSubscriptionManager.stop()
         blindSpotController.stop()
@@ -1059,7 +1058,7 @@ class TrackingService : Service(), LocationListener {
                     _lastData.value = data
                     fidSubscriptionManager.onPollSnapshot(data)
                     blindSpotController.onPollSnapshot(data)
-                    alicePollingManager.latestData = data
+                    haCommandPoller.latestData = data
                     // Cache for AutoserviceChargingDetector — avoids extra parsReader.fetch() inside runCatchUp.
                     autoserviceDetector.onSample(data)
                     // Roll the charge-start anchor forward while driving/parked so a

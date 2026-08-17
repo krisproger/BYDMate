@@ -122,12 +122,10 @@ data class SettingsUiState(
     val showRecalcConfirm: Boolean = false,
     // Hidden Smart Home settings (unlocked by tapping version 7 times)
     val devModeUnlocked: Boolean = false,
-    val aliceEndpoint: String = "",
-    val aliceApiKey: String = "",
-    val aliceEnabled: Boolean = false,
-    val aliceSaveStatus: String? = null,
     val haEnabled: Boolean = false,
-    val haUrl: String = "",
+    val haHost: String = "",
+    val haPort: String = "",
+    val haHttps: Boolean = false,
     val haToken: String = "",
     val haCarName: String = "",
     val haSaveStatus: String? = null,
@@ -344,11 +342,11 @@ class SettingsViewModel @Inject constructor(
             val exaApiKey = settingsRepository.getString(SettingsRepository.KEY_EXA_API_KEY, "")
 
             // Smart Home settings
-            val aliceEndpoint = settingsRepository.getString(SettingsRepository.KEY_ALICE_ENDPOINT, "")
-            val aliceApiKey = settingsRepository.getString(SettingsRepository.KEY_ALICE_API_KEY, "")
-            val aliceEnabled = settingsRepository.getString(SettingsRepository.KEY_ALICE_ENABLED, "false") == "true"
+            settingsRepository.migrateLegacyHaUrlIfNeeded()
             val haEnabled = settingsRepository.getString(SettingsRepository.KEY_HA_ENABLED, "false") == "true"
-            val haUrl = settingsRepository.getString(SettingsRepository.KEY_HA_URL, "")
+            val haHost = settingsRepository.getHaHost()
+            val haPort = settingsRepository.getHaPort().toString()
+            val haHttps = settingsRepository.isHaHttps()
             val haToken = settingsRepository.getString(SettingsRepository.KEY_HA_TOKEN, "")
             val haCarName = settingsRepository.getString(SettingsRepository.KEY_HA_CAR_NAME, "")
 
@@ -431,11 +429,10 @@ class SettingsViewModel @Inject constructor(
                     openRouterModel = modelId,
                     exaApiKey = exaApiKey,
                     openRouterModelName = modelId.substringAfterLast("/").substringBefore(":"),
-                    aliceEndpoint = aliceEndpoint,
-                    aliceApiKey = aliceApiKey,
-                    aliceEnabled = aliceEnabled,
                     haEnabled = haEnabled,
-                    haUrl = haUrl,
+                    haHost = haHost,
+                    haPort = haPort,
+                    haHttps = haHttps,
                     haToken = haToken,
                     haCarName = haCarName,
                     abrpTelemetryEnabled = abrpEnabled,
@@ -980,36 +977,16 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
-    fun updateAliceEndpoint(value: String) {
-        _uiState.update { it.copy(aliceEndpoint = value) }
+    fun updateHaHost(value: String) {
+        _uiState.update { it.copy(haHost = value) }
     }
 
-    fun updateAliceApiKey(value: String) {
-        _uiState.update { it.copy(aliceApiKey = value) }
+    fun updateHaPort(value: String) {
+        _uiState.update { it.copy(haPort = value.filter { c -> c.isDigit() }) }
     }
 
-    fun saveAliceSettings() {
-        val state = _uiState.value
-        viewModelScope.launch {
-            settingsRepository.setString(SettingsRepository.KEY_ALICE_ENDPOINT, state.aliceEndpoint)
-            settingsRepository.setString(SettingsRepository.KEY_ALICE_API_KEY, state.aliceApiKey)
-            val enabled = state.aliceEndpoint.isNotBlank() && state.aliceApiKey.isNotBlank()
-            settingsRepository.setString(SettingsRepository.KEY_ALICE_ENABLED, enabled.toString())
-            _uiState.update { it.copy(aliceEnabled = enabled, aliceSaveStatus = appContext.getString(R.string.settings_saved)) }
-            delay(2000)
-            _uiState.update { it.copy(aliceSaveStatus = null) }
-        }
-    }
-
-    fun toggleAlice(enabled: Boolean) {
-        _uiState.update { it.copy(aliceEnabled = enabled) }
-        viewModelScope.launch {
-            settingsRepository.setString(SettingsRepository.KEY_ALICE_ENABLED, enabled.toString())
-        }
-    }
-
-    fun updateHaUrl(value: String) {
-        _uiState.update { it.copy(haUrl = value) }
+    fun toggleHaHttps(enabled: Boolean) {
+        _uiState.update { it.copy(haHttps = enabled) }
     }
 
     fun updateHaToken(value: String) {
@@ -1022,11 +999,12 @@ class SettingsViewModel @Inject constructor(
 
     fun saveHaSettings() {
         val state = _uiState.value
+        val port = state.haPort.toIntOrNull()?.coerceIn(1, 65535) ?: 8123
         viewModelScope.launch {
-            settingsRepository.setString(SettingsRepository.KEY_HA_URL, state.haUrl.trim())
+            settingsRepository.saveHaEndpoint(state.haHost, port, state.haHttps)
             settingsRepository.setString(SettingsRepository.KEY_HA_TOKEN, state.haToken.trim())
             settingsRepository.setString(SettingsRepository.KEY_HA_CAR_NAME, state.haCarName.trim())
-            val enabled = state.haUrl.isNotBlank() && state.haToken.isNotBlank() && state.haCarName.isNotBlank()
+            val enabled = state.haHost.isNotBlank() && state.haToken.isNotBlank() && state.haCarName.isNotBlank()
             settingsRepository.setString(SettingsRepository.KEY_HA_ENABLED, enabled.toString())
             _uiState.update { it.copy(haEnabled = enabled, haSaveStatus = appContext.getString(R.string.settings_saved)) }
             delay(2000)
