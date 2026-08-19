@@ -236,16 +236,27 @@ class SplitSessionManagerTest {
         assertFalse(backdrop.shown)
         assertTrue(
             "journal was ${store.value}",
-            store.value.contains("start wide pkg.wide -> no task state reply (retried once)"),
+            store.value.contains("start wide pkg.wide -> no task state reply (2 silences in 2 reads)"),
         )
     }
 
-    /** `taskId == -1` is an answer from a live channel — retrying it would only add latency. */
-    @Test fun `a confirmed absent task fails the start without a retry`() = runTest {
+    /**
+     * `taskId == -1` right after a launch means "not yet", not "never" (#139): on a cold start the
+     * app process has not created its task when the first read lands, which is why the user's
+     * second tap always worked. The pane must be given the appearance window.
+     */
+    @Test fun `a task that appears on the third read still lands the start`() = runTest {
         val helper = mockk<HelperClient>(relaxed = true)
-        val (_, narrow) = boundsFor(SplitSide.RIGHT)
+        val (wide, narrow) = boundsFor(SplitSide.RIGHT)
         helper.stubLaunch("pkg.wide", "pkg.narrow")
-        coEvery { helper.getTaskState("pkg.wide") } returns SplitTaskState(-1, 0, 0, 0, 0, 0)
+        // Two pre-launch reads see no task (clean-start path), then the cold-launching app reports
+        // no task twice before its task shows up.
+        coEvery { helper.getTaskState("pkg.wide") } returnsMany listOf(
+            null, null,
+            SplitTaskState(-1, 0, 0, 0, 0, 0),
+            SplitTaskState(-1, 0, 0, 0, 0, 0),
+            SplitTaskState(10, 5, wide.left, wide.top, wide.right, wide.bottom),
+        )
         helper.stubTask("pkg.narrow", taskId = 11, mode = 5, b = narrow)
         val store = CountingJournalStore()
 
@@ -254,15 +265,126 @@ class SplitSessionManagerTest {
             tickDelayMs = 60_000,
             journal = SplitJournalImpl(store) { 1_700_000_000_000L },
         )
+        val pair = SplitPair("pkg.narrow", "pkg.wide", SplitSide.RIGHT)
+        val startedAt = currentTime
+
+        val result = mgr.start(pair)
+
+        assertEquals(SplitStartResult.OK, result)
+        assertEquals(SplitSessionState.Active(pair, 11, 10), mgr.state.value)
+        assertEquals("one pause per re-read, nothing more", 1000L, currentTime - startedAt)
+        coVerify(exactly = 0) { helper.setTaskWindowingMode(any(), 1) }
+        assertTrue(
+            "journal was ${store.value}",
+            store.value.contains("start wide task state confirmed on retry (pkg=pkg.wide)"),
+        )
+    }
+
+    /** A pane that never produces a task inside the appearance window fails the start honestly. */
+    @Test fun `a task absent through the whole appearance window fails the start`() = runTest {
+        val helper = mockk<HelperClient>(relaxed = true)
+        val (_, narrow) = boundsFor(SplitSide.RIGHT)
+        helper.stubLaunch("pkg.wide", "pkg.narrow")
+        coEvery { helper.getTaskState("pkg.wide") } returns SplitTaskState(-1, 0, 0, 0, 0, 0)
+        helper.stubTask("pkg.narrow", taskId = 11, mode = 5, b = narrow)
+        val store = CountingJournalStore()
+        val backdrop = FakeSplitBackdrop()
+
+        val mgr = SplitSessionManager(
+            helper, FakeSplitPreferences(), backdrop, backgroundScope,
+            tickDelayMs = 60_000,
+            journal = SplitJournalImpl(store) { 1_700_000_000_000L },
+        )
         val startedAt = currentTime
 
         val result = mgr.start(SplitPair("pkg.narrow", "pkg.wide", SplitSide.RIGHT))
 
         assertEquals(SplitStartResult.LAUNCH_FAILED, result)
-        assertEquals("an answered read must not cost a retry pause", startedAt, currentTime)
+        assertEquals(SplitSessionState.Idle, mgr.state.value)
+        assertFalse(backdrop.shown)
+        assertEquals("six reads, five pauses between them", 2500L, currentTime - startedAt)
+        // Both panes are handed back: the wide task does not exist, the narrow one is reverted.
+        coVerify { helper.setTaskWindowingMode(11, 1) }
         assertTrue(
             "the observed state is the diagnosis, journal was ${store.value}",
-            store.value.contains("start wide pkg.wide -> no task after launch (task=-1 mode=0 display=0)"),
+            store.value.contains("start wide pkg.wide -> no task after launch (task=-1 mode=0 display=0, waited 6 reads)"),
+        )
+    }
+
+    /**
+     * A busy daemon channel does not produce clean runs of one answer: silences arrive between the
+     * cold-launch -1s. The silence budget is spent by silences only, so the second one is terminal
+     * however far apart they land — and the journal has to carry both facts (how many reads, what
+     * the last answer was) for triage.
+     */
+    @Test fun `silence interleaved with absent answers still fails on the second silence`() = runTest {
+        val helper = mockk<HelperClient>(relaxed = true)
+        val (_, narrow) = boundsFor(SplitSide.RIGHT)
+        helper.stubLaunch("pkg.wide", "pkg.narrow")
+        // Two pre-launch reads (clean-start path), then confirm: silence, -1, -1, silence.
+        coEvery { helper.getTaskState("pkg.wide") } returnsMany listOf(
+            null, null,
+            null,
+            SplitTaskState(-1, 0, 0, 0, 0, 0),
+            SplitTaskState(-1, 0, 0, 0, 0, 0),
+            null,
+        )
+        helper.stubTask("pkg.narrow", taskId = 11, mode = 5, b = narrow)
+        val store = CountingJournalStore()
+        val backdrop = FakeSplitBackdrop()
+
+        val mgr = SplitSessionManager(
+            helper, FakeSplitPreferences(), backdrop, backgroundScope,
+            tickDelayMs = 60_000,
+            journal = SplitJournalImpl(store) { 1_700_000_000_000L },
+        )
+
+        val result = mgr.start(SplitPair("pkg.narrow", "pkg.wide", SplitSide.RIGHT))
+
+        assertEquals(SplitStartResult.LAUNCH_FAILED, result)
+        assertEquals(SplitSessionState.Idle, mgr.state.value)
+        assertFalse(backdrop.shown)
+        coVerify { helper.setTaskWindowingMode(11, 1) }
+        assertTrue(
+            "journal was ${store.value}",
+            store.value.contains(
+                "start wide pkg.wide -> no task state reply " +
+                    "(2 silences in 4 reads, last answer task=-1 mode=0 display=0)"
+            ),
+        )
+    }
+
+    /** One silence among the cold-launch -1s must not cost the pane its appearance window. */
+    @Test fun `one silence among absent answers still lands the start`() = runTest {
+        val helper = mockk<HelperClient>(relaxed = true)
+        val (wide, narrow) = boundsFor(SplitSide.RIGHT)
+        helper.stubLaunch("pkg.wide", "pkg.narrow")
+        // Two pre-launch reads (clean-start path), then confirm: -1, silence, -1, live task.
+        coEvery { helper.getTaskState("pkg.wide") } returnsMany listOf(
+            null, null,
+            SplitTaskState(-1, 0, 0, 0, 0, 0),
+            null,
+            SplitTaskState(-1, 0, 0, 0, 0, 0),
+            SplitTaskState(10, 5, wide.left, wide.top, wide.right, wide.bottom),
+        )
+        helper.stubTask("pkg.narrow", taskId = 11, mode = 5, b = narrow)
+        val store = CountingJournalStore()
+
+        val mgr = SplitSessionManager(
+            helper, FakeSplitPreferences(), FakeSplitBackdrop(), backgroundScope,
+            tickDelayMs = 60_000,
+            journal = SplitJournalImpl(store) { 1_700_000_000_000L },
+        )
+        val pair = SplitPair("pkg.narrow", "pkg.wide", SplitSide.RIGHT)
+
+        val result = mgr.start(pair)
+
+        assertEquals(SplitStartResult.OK, result)
+        assertEquals(SplitSessionState.Active(pair, 11, 10), mgr.state.value)
+        coVerify(exactly = 0) { helper.setTaskWindowingMode(any(), 1) }
+        assertTrue(
+            "journal was ${store.value}",
+            store.value.contains("start wide task state confirmed on retry (pkg=pkg.wide)"),
         )
     }
 
