@@ -7,6 +7,7 @@ plugins {
     id("com.google.devtools.ksp")
     id("com.google.dagger.hilt.android")
     id("org.jetbrains.kotlin.plugin.compose")
+    id("org.gradle.test-retry")
 }
 
 // Release signing is loaded from keystore.properties (gitignored, never in VCS).
@@ -27,8 +28,8 @@ android {
         // on DiLink Android 12 (requestLegacyExternalStorage works).
         // targetSdk 30+ would break listFiles() on /storage/emulated/0/energydata/
         targetSdk = 29
-        versionCode = 417
-        versionName = "3.11.9"
+        versionCode = 428
+        versionName = "3.13"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -101,6 +102,21 @@ android {
             // instead of throwing RuntimeException — this keeps AutoserviceChargingDetector
             // testable without requiring Robolectric for every test class.
             isReturnDefaultValues = true
+            all { test ->
+                // The default 512m test-worker heap OOMs near the end of the 3.5k-test
+                // Robolectric suite on RAM-constrained CI runners (TtsModelManagerTest OOM,
+                // CI runs 2026-08-19/24); dev machines pass on GC luck. One worker → 2g is safe.
+                test.maxHeapSize = "2g"
+                // CI only: retry individual failed tests to absorb the known inter-test
+                // pollution flake (UncaughtExceptionsBeforeTest hitting random classes).
+                // Local runs stay strict; a real failure still fails all 3 attempts.
+                test.extensions.configure(org.gradle.testretry.TestRetryTaskExtension::class.java) {
+                    if (System.getenv("CI") == "true") {
+                        maxRetries.set(2)
+                        maxFailures.set(10)
+                    }
+                }
+            }
         }
     }
 

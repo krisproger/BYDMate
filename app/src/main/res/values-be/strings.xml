@@ -72,6 +72,15 @@
     <string name="learn_button_save">Захаваць</string>
     <string name="learn_button_again">Нанова</string>
     <string name="learn_button_cancel">Скасаваць</string>
+    <!-- Volume knob on the steering wheel: play/pause instead of audio-source switch -->
+    <string name="settings_knob_play_pause_title">Кола гучнасці на рулі</string>
+    <string name="settings_knob_play_pause_desc">Націсканне ставіць на паўзу і працягвае прайграванне, а не пераключае крыніцу гуку. Патрэбна пасля абнаўлення прашыўкі, дзе націсканне стала мяняць крыніцу.</string>
+    <!-- Car system section: BYD head unit settings, not app settings -->
+    <string name="settings_car_system_header">Сістэма машыны</string>
+    <string name="settings_car_language_title">Мова інтэрфейсу машыны</string>
+    <string name="settings_car_language_desc">Толькі для прашыўкі UI7. Кнопка адкрывае схаваны штатны дыялог BYD з поўным спісам моў. Уключыць рускую: выберыце «Русский язык», потым OK. Вярнуць назад: тая ж кнопка, «English», OK. Увага: на рускай мове ў часткі ўладальнікаў перастае працаваць аўтапаркоўка. Калі карыстаецеся аўтапаркоўкай, пакіньце English.</string>
+    <string name="settings_car_language_button">Адкрыць выбар мовы</string>
+    <string name="settings_car_language_unavailable">Дыялог выбару мовы недаступны на гэтай прашыўцы</string>
     <string name="settings_section_places_title">Месцы</string>
     <string name="settings_section_application_title">Праграма</string>
     <!-- Smart Home section nav label stays Russian per design spec (hidden section) -->
@@ -133,6 +142,16 @@
     <string name="settings_abrp_location_label">Адпраўляць каардынаты ў ABRP</string>
     <string name="settings_abrp_location_description">Дадае GPS-пазіцыю і курс машыны ў тэлеметрыю. Па змаўчанні выключана: ABRP на DiLink чытае каардынаты сам. Уключыце, калі стрэлка машыны ў ABRP адстае ад рэальнага становішча.</string>
     <string name="settings_abrp_save_button">Захаваць ABRP</string>
+    <string name="settings_webhook_section_header">Вебхук - тэлеметрыя</string>
+    <string name="settings_webhook_label">Жывыя даныя -> свой сервер</string>
+    <string name="settings_webhook_description">Той самы JSON, што ідзе ў ABRP (SOC, магутнасць, тэмпературы, адометр, ціск шын, зарадка), адпраўляецца POST-запытам на ваш URL: раз на секунду ў руху, раз на 8 секунд на зарадцы, раз на 30 секунд на стаянцы. Каардынаты па змаўчанні не перадаюцца.</string>
+    <string name="settings_webhook_url_label">URL (https://)</string>
+    <string name="settings_webhook_secret_label">Сакрэт (загаловак Authorization: Bearer), неабавязкова</string>
+    <string name="settings_webhook_location_label">Адпраўляць каардынаты на вебхук</string>
+    <string name="settings_webhook_location_description">Дадае GPS-пазіцыю і курс машыны ў JSON.</string>
+    <string name="settings_webhook_save_button">Захаваць вебхук</string>
+    <string name="settings_webhook_saved">Вебхук захаваны</string>
+    <string name="settings_webhook_invalid_url">Няправільны URL</string>
     <string name="settings_openrouter_section_header">OpenRouter</string>
     <string name="settings_openrouter_api_key_label">OpenRouter API Key</string>
     <string name="settings_openrouter_model_selected">Мадэль: %1$s</string>
@@ -160,7 +179,7 @@
     <string name="orb_agent">Агент:</string>
     <string name="settings_voice_native_assistant_header">Штатны галасавы памочнік BYD</string>
     <string name="settings_voice_disable_native_label">Адключыць штатны галасавы памочнік</string>
-    <string name="settings_voice_disable_native_description">Хавае ўбудаваны галасавы асістэнт BYD, каб ён не перабіваў. Зваротна.</string>
+    <string name="settings_voice_disable_native_description">Хавае ўбудаваны галасавы асістэнт BYD, каб ён не перабіваў. Разам з ім знікае і праграма Shortcuts (хуткія каманды), гэта яго частка. Зваротна: выключыце тумблер і перазагрузіце мультымедыя, абодва вернуцца.</string>
     <string name="settings_voice_native_assistant_reboot_note">Змена набудзе сілу пасля перазагрузкі галаўной прылады.</string>
     <string name="settings_widget_opacity_label">Празрыстасць</string>
     <string name="settings_widget_scale_label">Памер</string>
@@ -374,6 +393,13 @@
     <string name="automation_trigger_type_button_press">Націсканне кнопкі</string>
     <string name="automation_trigger_button_label">Кнопка %1$d</string>
     <string name="automation_trigger_button_picker_label">Кнопка</string>
+    <string name="automation_trigger_type_steering_key">Клавіша руля</string>
+    <string name="automation_trigger_steering_key_picker_label">Клавіша руля</string>
+    <string name="automation_trigger_steering_key_unassigned">Клавіша не прызначана</string>
+    <string name="automation_trigger_steering_key_assign">прызначыць</string>
+    <string name="automation_steering_key_occupied_projection">Гэтая клавіша ўключае навігацыю на прыборнай панэлі. Вызваліце яе ў Наладах, раздзел Дысплей, або выберыце іншую.</string>
+    <string name="automation_steering_key_occupied_voice">Гэтая клавіша выклікае галасавога памочніка BYDMate. Змяніце клавішу ў Наладах, раздзел Голас-агент, або выберыце іншую.</string>
+    <string name="automation_steering_key_occupied_knob">Націсканне кола занята функцыяй play/pause. Выключыце яе ў Наладах, раздзел Дысплей, або выберыце іншую клавішу.</string>
     <string name="automation_trigger_type_voice">Голас</string>
     <string name="automation_trigger_voice_phrase_label">Фраза-трыгер</string>
     <string name="automation_voice_phrase_empty">Галасавая фраза пустая</string>
@@ -1089,6 +1115,15 @@
     <string name="auto_a11y_move_up">вышэй</string>
     <string name="auto_a11y_move_down">ніжэй</string>
     <string name="auto_a11y_run_now">выканаць зараз</string>
+    <!-- safety gate block reasons (ActionDispatcher.BlockReason) -->
+    <string name="gate_speed_unknown">Хуткасць невядомая</string>
+    <string name="gate_sunroof_speed">Адкрыццё люка заблакаванае на хуткасці %1$d км/г (&gt;80)</string>
+    <string name="gate_windows_speed">Адкрыццё вокнаў заблакаванае на хуткасці %1$d км/г (&gt;120)</string>
+    <string name="gate_unlock_speed_unknown">Хуткасць невядомая, дзверы не адмыкаю</string>
+    <string name="gate_unlock_speed">Адмыканне дзвярэй заблакаванае на хуткасці %1$d км/г (&gt;30)</string>
+    <string name="gate_forbidden_command">Забароненая каманда</string>
+    <string name="gate_frunk_speed_unknown">Хуткасць невядомая, пярэдні багажнік не адкрыць</string>
+    <string name="gate_frunk_moving">Пярэдні багажнік адкрываецца толькі на стаянцы (хуткасць %1$d км/г)</string>
 
     <!-- Voice control (Phase 0) -->
     <string name="settings_section_voice_agent">Голас-агент</string>
@@ -1100,6 +1135,7 @@
     <string name="voice_thinking">Думаю</string>
     <string name="voice_error_model_missing">Галасавая мадэль не загружана. Спампуйце яе ў Наладах, раздзел Голас-агент.</string>
     <string name="voice_error_lang_not_ru">Галасавыя каманды разумеюць толькі рускую мову. У Наладах выберыце Мову голасу: Русский.</string>
+    <string name="voice_block_park_required">Патрэбны паркінг</string>
 
     <!-- GigaAM v3: free-form Russian speech recognition (offline) -->
     <string name="settings_asr_gigaam_title">Распазнаванне маўлення</string>
@@ -1180,6 +1216,10 @@
     <string name="settings_agent_gender_male">Мужчынскі</string>
     <string name="settings_agent_gender_female">Жаночы</string>
     <string name="settings_agent_gender_hint">Дзейнічае на ўсе галасы: у кожнай крыніцы ёсць мужчынскі і жаночы варыянт</string>
+    <string name="settings_agent_memory_title">Памяць пра кіроўцу</string>
+    <string name="settings_agent_memory_hint">Агент запамінае імя і ўстойлівыя перавагі, калі вы яму пра гэта кажаце. Скажыце «забудзь …», каб прыбраць адзін факт</string>
+    <string name="settings_agent_memory_empty">Пакуль нічога не запомнена</string>
+    <string name="settings_agent_memory_forget_all">Забыць усё</string>
 
     <!-- Voice agent (Phase 1) -->
     <string name="agent_enable_title">Галасавы AI-агент</string>
@@ -1345,6 +1385,7 @@
     <string name="settings_split_mechanism_freeform">Вокны BYDMate</string>
     <string name="settings_split_mechanism_native">Родны падзел</string>
     <string name="settings_split_mechanism_native_hint">Падзел выконвае прашыўка машыны. Выгляд залежыць ад прашыўкі: дзве панэлі 1/3 і 2/3 або папалам з выбарам другой праграмы на экране.</string>
+    <string name="settings_split_mechanism_platformized_hint">На гэтай прашыўцы экран дзеліць сама машына: панэлі 1/3 і 2/3, падзяляльнік і жэст абмену родныя. BYDMate толькі запускае абраную пару і вяртае праграму ў яе панэль.</string>
     <string name="settings_split_try_native_hint">Паспрабуйце рэжым Родны падзел.</string>
     <string name="split_feature_disabled">Падзел экрана выключаны ў наладах</string>
 </resources>

@@ -69,6 +69,15 @@
     <string name="learn_button_save">Salvar</string>
     <string name="learn_button_again">Novamente</string>
     <string name="learn_button_cancel">Cancelar</string>
+    <!-- Volume knob on the steering wheel: play/pause instead of audio-source switch -->
+    <string name="settings_knob_play_pause_title">Botão giratório de volume no volante</string>
+    <string name="settings_knob_play_pause_desc">Pressionar pausa e retoma a reprodução em vez de trocar a fonte de áudio. Necessário após a atualização de firmware em que o toque passou a mudar a fonte.</string>
+    <!-- Car system section: BYD head unit settings, not app settings -->
+    <string name="settings_car_system_header">Sistema do carro</string>
+    <string name="settings_car_language_title">Idioma da interface do carro</string>
+    <string name="settings_car_language_desc">Apenas para o firmware UI7. O botão abre a caixa de diálogo de fábrica oculta da BYD com a lista completa de idiomas. Para ativar o russo: escolha \"Русский язык\" e depois OK. Para voltar: o mesmo botão, \"English\", OK. Atenção: com o russo, o estacionamento automático deixa de funcionar para alguns proprietários. Se usa o estacionamento automático, mantenha English.</string>
+    <string name="settings_car_language_button">Abrir seleção de idioma</string>
+    <string name="settings_car_language_unavailable">A caixa de diálogo de idioma não está disponível neste firmware</string>
     <string name="settings_section_places_title">Locais</string>
     <string name="settings_section_application_title">Aplicativo</string>
     <string name="settings_smart_home_section_title">Casa inteligente</string>
@@ -124,6 +133,16 @@
     <string name="settings_abrp_location_label">Enviar coordenadas ao ABRP</string>
     <string name="settings_abrp_location_description">Adiciona a posição GPS e o rumo do carro à telemetria. Desligado por padrão: o ABRP no DiLink lê a localização por conta própria. Ative se a seta do carro no ABRP ficar atrás da posição real.</string>
     <string name="settings_abrp_save_button">Salvar ABRP</string>
+    <string name="settings_webhook_section_header">Webhook - telemetria</string>
+    <string name="settings_webhook_label">Dados ao vivo -&gt; seu próprio servidor</string>
+    <string name="settings_webhook_description">O mesmo JSON que vai para o ABRP (SoC, potência, temperaturas, hodômetro, pressão dos pneus, carregamento) é enviado por requisição POST para a sua URL: uma vez por segundo em movimento, a cada 8 segundos carregando e a cada 30 segundos estacionado. As coordenadas não são enviadas por padrão.</string>
+    <string name="settings_webhook_url_label">URL (https://)</string>
+    <string name="settings_webhook_secret_label">Segredo (cabeçalho Authorization: Bearer), opcional</string>
+    <string name="settings_webhook_location_label">Enviar coordenadas ao webhook</string>
+    <string name="settings_webhook_location_description">Adiciona a posição GPS e o rumo do carro ao JSON.</string>
+    <string name="settings_webhook_save_button">Salvar webhook</string>
+    <string name="settings_webhook_saved">Webhook salvo</string>
+    <string name="settings_webhook_invalid_url">URL inválida</string>
     <string name="settings_openrouter_api_key_label">Chave de API do OpenRouter</string>
     <string name="settings_openrouter_model_selected">Modelo: %1$s</string>
     <string name="settings_openrouter_model_pick">Escolher modelo</string>
@@ -144,7 +163,7 @@
     <string name="orb_agent">Agente:</string>
     <string name="settings_voice_native_assistant_header">Assistente de voz nativo da BYD</string>
     <string name="settings_voice_disable_native_label">Desativar o assistente de voz integrado</string>
-    <string name="settings_voice_disable_native_description">Oculta o assistente de voz nativo da BYD para que ele não interrompa. Reversível.</string>
+    <string name="settings_voice_disable_native_description">Oculta o assistente de voz nativo da BYD para que ele não interrompa. O app Shortcuts (comandos rápidos) desaparece junto, ele faz parte do assistente. Reversível: desligue o botão e reinicie a central multimídia, os dois voltam.</string>
     <string name="settings_voice_native_assistant_reboot_note">Entra em vigor após reiniciar a central multimídia.</string>
     <string name="settings_widget_opacity_label">Opacidade</string>
     <string name="settings_widget_scale_label">Tamanho</string>
@@ -318,6 +337,13 @@
     <string name="automation_trigger_type_button_press">Pressionamento de botão</string>
     <string name="automation_trigger_button_label">Botão %1$d</string>
     <string name="automation_trigger_button_picker_label">Botão</string>
+    <string name="automation_trigger_type_steering_key">Tecla do volante</string>
+    <string name="automation_trigger_steering_key_picker_label">Tecla do volante</string>
+    <string name="automation_trigger_steering_key_unassigned">Tecla não atribuída</string>
+    <string name="automation_trigger_steering_key_assign">atribuir</string>
+    <string name="automation_steering_key_occupied_projection">Esta tecla liga a navegação no painel de instrumentos. Libere-a em Configurações, seção Tela, ou escolha outra.</string>
+    <string name="automation_steering_key_occupied_voice">Esta tecla chama o assistente de voz do BYDMate. Altere a tecla em Configurações, seção Agente de voz, ou escolha outra.</string>
+    <string name="automation_steering_key_occupied_knob">O toque no botão giratório está ocupado pela função play/pause. Desative-a em Configurações, seção Tela, ou escolha outra tecla.</string>
 
     <!-- Schedule trigger (exact time / range + days of week) -->
     <string name="automation_schedule_mode_exact">Exato</string>
@@ -929,6 +955,15 @@
     <string name="auto_a11y_move_up">Mover para cima</string>
     <string name="auto_a11y_move_down">Mover para baixo</string>
     <string name="auto_a11y_run_now">Executar agora</string>
+    <!-- safety gate block reasons (ActionDispatcher.BlockReason) -->
+    <string name="gate_speed_unknown">Velocidade desconhecida</string>
+    <string name="gate_sunroof_speed">Abertura do teto solar bloqueada a %1$d km/h (&gt;80)</string>
+    <string name="gate_windows_speed">Abertura dos vidros bloqueada a %1$d km/h (&gt;120)</string>
+    <string name="gate_unlock_speed_unknown">Velocidade desconhecida, não destranco as portas</string>
+    <string name="gate_unlock_speed">Destrancamento das portas bloqueado a %1$d km/h (&gt;30)</string>
+    <string name="gate_forbidden_command">Comando proibido</string>
+    <string name="gate_frunk_speed_unknown">Velocidade desconhecida, não é possível abrir o porta-malas dianteiro</string>
+    <string name="gate_frunk_moving">O porta-malas dianteiro abre apenas parado (velocidade %1$d km/h)</string>
 
     <!-- Voice agent (Wave J): multi-provider LLM connections -->
     <string name="settings_conn_not_configured">Conexão não configurada</string>
@@ -1018,6 +1053,10 @@
     <string name="settings_agent_gender_male">Masculino</string>
     <string name="settings_agent_gender_female">Feminino</string>
     <string name="settings_agent_gender_hint">Aplica-se a todas as vozes: cada fonte tem uma opção masculina e feminina</string>
+    <string name="settings_agent_memory_title">Memória sobre o motorista</string>
+    <string name="settings_agent_memory_hint">O agente memoriza o nome e as preferências constantes quando você lhe diz isso. Diga “esqueça …” para remover um fato</string>
+    <string name="settings_agent_memory_empty">Nada memorizado ainda</string>
+    <string name="settings_agent_memory_forget_all">Esquecer tudo</string>
     <string name="settings_voice_button_mic_header">Botão e microfone</string>
     <string name="settings_section_service_title">Serviço e dados</string>
     <string name="settings_battery_capacity_desc">Usado para estimar autonomia e custo</string>
@@ -1077,6 +1116,7 @@
     <string name="voice_thinking">Pensando</string>
     <string name="voice_error_model_missing">O modelo de voz não está baixado. Baixe-o em Configurações, seção Agente de voz.</string>
     <string name="voice_error_lang_not_ru">Os comandos de voz entendem apenas fala em russo. Em Configurações, defina Idioma de voz: Russo.</string>
+    <string name="voice_block_park_required">É necessário estar em P</string>
     <string name="settings_asr_gigaam_title">Reconhecimento de fala</string>
     <string name="settings_asr_gigaam_ready">Modelo pronto</string>
     <string name="settings_asr_gigaam_download">Baixar (%1$s)</string>
@@ -1189,6 +1229,7 @@
     <string name="settings_split_mechanism_freeform">Janelas do BYDMate</string>
     <string name="settings_split_mechanism_native">Divisão nativa</string>
     <string name="settings_split_mechanism_native_hint">A divisão é feita pelo firmware do carro. O resultado depende do firmware: dois painéis de 1/3 e 2/3 ou metade a metade, escolhendo o segundo aplicativo na tela.</string>
+    <string name="settings_split_mechanism_platformized_hint">Neste firmware o próprio carro divide a tela: os painéis de 1/3 e 2/3, o divisor e o gesto de troca são nativos. O BYDMate apenas inicia o par escolhido e devolve o aplicativo ao seu painel.</string>
     <string name="settings_split_try_native_hint">Experimente o modo Divisão nativa.</string>
     <string name="split_feature_disabled">Tela dividida desativada nas configurações</string>
 </resources>

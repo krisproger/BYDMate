@@ -39,6 +39,7 @@ import com.bydmate.app.service.UpdateChecker
 import com.bydmate.app.util.CrashLog
 import com.bydmate.app.util.appLocalizedContext
 import com.bydmate.app.R
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import org.json.JSONArray
 import org.json.JSONObject
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -136,6 +137,11 @@ data class SettingsUiState(
     val abrpCarModel: String = "",
     val abrpSendLocation: Boolean = false,
     val abrpSaveStatus: String? = null,
+    val webhookEnabled: Boolean = false,
+    val webhookUrl: String = "",
+    val webhookSecret: String = "",
+    val webhookSendLocation: Boolean = false,
+    val webhookSaveStatus: String? = null,
     /** Status of the last config backup/restore operation. Red if starts with error prefix. */
     val configStatus: String? = null,
     /** Status of the last fid-catalog dump. Null = idle. Red if starts with error prefix. */
@@ -180,6 +186,8 @@ data class SettingsUiState(
     val agentName: String = "",
     val agentPersona: String = AgentPersona.NAVIGATOR.id,
     val agentGender: String = "m",
+    /** Long-term facts the agent remembered about the driver (DriverMemory). */
+    val agentMemoryFacts: List<String> = emptyList(),
     // Wave J: multi-provider LLM connections (OpenRouter / z.ai / custom)
     val zaiApiKey: String = "",
     val customName: String = "",
@@ -245,6 +253,7 @@ class SettingsViewModel @Inject constructor(
     private val splitPreferences: com.bydmate.app.split.SplitPreferences,
     private val splitSessionManager: com.bydmate.app.split.SplitSessionManager,
     private val splitJournal: com.bydmate.app.split.SplitJournal,
+    private val driverMemory: com.bydmate.app.agent.DriverMemory,
 ) : ViewModel() {
 
     private val _appLanguage = MutableStateFlow(localePreferences.getLanguage() ?: "ru")
@@ -355,6 +364,11 @@ class SettingsViewModel @Inject constructor(
             val abrpUserToken = settingsRepository.getString(SettingsRepository.KEY_ABRP_USER_TOKEN, "")
             val abrpCarModel = settingsRepository.getString(SettingsRepository.KEY_ABRP_CAR_MODEL, "")
             val abrpSendLocation = settingsRepository.getString(SettingsRepository.KEY_ABRP_SEND_LOCATION, "false") == "true"
+
+            val webhookEnabled = settingsRepository.getString(SettingsRepository.KEY_WEBHOOK_ENABLED, "false") == "true"
+            val webhookUrl = settingsRepository.getString(SettingsRepository.KEY_WEBHOOK_URL, "")
+            val webhookSecret = settingsRepository.getString(SettingsRepository.KEY_WEBHOOK_SECRET, "")
+            val webhookSendLocation = settingsRepository.getString(SettingsRepository.KEY_WEBHOOK_SEND_LOCATION, "false") == "true"
             val mapTileSource = settingsRepository.getMapTileSource()
             val disableNativeAssistant =
                 settingsRepository.getString(SettingsRepository.KEY_DISABLE_NATIVE_ASSISTANT, "false") == "true"
@@ -440,6 +454,10 @@ class SettingsViewModel @Inject constructor(
                     abrpUserToken = abrpUserToken,
                     abrpCarModel = abrpCarModel,
                     abrpSendLocation = abrpSendLocation,
+                    webhookEnabled = webhookEnabled,
+                    webhookUrl = webhookUrl,
+                    webhookSecret = webhookSecret,
+                    webhookSendLocation = webhookSendLocation,
                     mapTileSource = mapTileSource,
                     disableNativeAssistant = disableNativeAssistant,
                     voiceEnabled = voiceEnabled,
@@ -458,6 +476,7 @@ class SettingsViewModel @Inject constructor(
                     agentName = agentName,
                     agentPersona = agentPersona,
                     agentGender = agentGender,
+                    agentMemoryFacts = driverMemory.facts(),
                     zaiApiKey = zaiApiKey,
                     customName = customName,
                     customBaseUrl = customBaseUrl,
@@ -1068,6 +1087,63 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
+    fun toggleWebhook(enabled: Boolean) {
+        // Same reasoning as ABRP: without a URL there is nowhere to send, and
+        // an "on" toggle with no target only confuses the user.
+        val effective = enabled && _uiState.value.webhookUrl.isNotBlank()
+        _uiState.update { it.copy(webhookEnabled = effective) }
+        viewModelScope.launch {
+            settingsRepository.setString(SettingsRepository.KEY_WEBHOOK_ENABLED, effective.toString())
+        }
+    }
+
+    fun toggleWebhookSendLocation(enabled: Boolean) {
+        _uiState.update { it.copy(webhookSendLocation = enabled) }
+        viewModelScope.launch {
+            settingsRepository.setString(SettingsRepository.KEY_WEBHOOK_SEND_LOCATION, enabled.toString())
+        }
+    }
+
+    fun updateWebhookUrl(value: String) {
+        _uiState.update { it.copy(webhookUrl = value) }
+    }
+
+    fun updateWebhookSecret(value: String) {
+        _uiState.update { it.copy(webhookSecret = value) }
+    }
+
+    fun saveWebhookSettings() {
+        val state = _uiState.value
+        val url = state.webhookUrl.trim()
+        viewModelScope.launch {
+            // Reject garbage early: the send path silently drops an unparsable
+            // URL, so without this the user would see a working toggle and no data.
+            val valid = url.isEmpty() || url.toHttpUrlOrNull()
+                ?.let { com.bydmate.app.data.remote.WebhookTelemetryClient.isAllowedWebhookUrl(it) } == true
+            if (!valid) {
+                _uiState.update {
+                    it.copy(webhookSaveStatus = appContext.getString(R.string.settings_webhook_invalid_url))
+                }
+                delay(2000)
+                _uiState.update { it.copy(webhookSaveStatus = null) }
+                return@launch
+            }
+            settingsRepository.setString(SettingsRepository.KEY_WEBHOOK_URL, url)
+            settingsRepository.setString(SettingsRepository.KEY_WEBHOOK_SECRET, state.webhookSecret.trim())
+            val enabled = state.webhookEnabled && url.isNotEmpty()
+            settingsRepository.setString(SettingsRepository.KEY_WEBHOOK_ENABLED, enabled.toString())
+            _uiState.update {
+                it.copy(
+                    webhookUrl = url,
+                    webhookEnabled = enabled,
+                    webhookSaveStatus = appContext.getString(R.string.settings_webhook_saved),
+                )
+            }
+            delay(2000)
+            _uiState.update { it.copy(webhookSaveStatus = null) }
+        }
+    }
+
     fun saveMapTileSource(source: String) {
         _uiState.update { it.copy(mapTileSource = source) }
         viewModelScope.launch {
@@ -1387,6 +1463,21 @@ class SettingsViewModel @Inject constructor(
         if (currentVoice.gender != wantGender) {
             setTtsVoice(TtsVoiceCatalog.counterpart(currentVoice).id)
         }
+    }
+
+    /**
+     * Re-reads the driver facts the agent keeps in DriverMemory. The agent can remember or
+     * forget things while Settings is closed, so the card asks for a fresh list on entry
+     * instead of trusting what was loaded with the rest of the state.
+     */
+    fun refreshAgentMemory() {
+        _uiState.update { it.copy(agentMemoryFacts = driverMemory.facts()) }
+    }
+
+    /** Drops every remembered fact. No confirmation: the driver can tell them to the agent again. */
+    fun forgetAgentMemory() {
+        driverMemory.forgetAll()
+        _uiState.update { it.copy(agentMemoryFacts = emptyList()) }
     }
 
     /**
@@ -1791,7 +1882,8 @@ class SettingsViewModel @Inject constructor(
                     is com.bydmate.app.split.SplitSessionState.Active -> {
                         appendLine(
                             "session: active narrow=${session.pair.narrowPkg}#${session.narrowTaskId} " +
-                                "wide=${session.pair.widePkg}#${session.wideTaskId} side=${session.pair.narrowSide}"
+                                "wide=${session.pair.widePkg}#${session.wideTaskId} " +
+                                "side=${session.pair.narrowSide} native=${session.nativePanes}"
                         )
                         val departed = splitSessionManager.departedPanePkgs()
                         appendLine("departed_panes: " + if (departed.isEmpty()) "(none)" else departed.joinToString(","))

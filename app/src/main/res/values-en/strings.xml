@@ -68,6 +68,15 @@
     <string name="learn_button_save">Save</string>
     <string name="learn_button_again">Again</string>
     <string name="learn_button_cancel">Cancel</string>
+    <!-- Volume knob on the steering wheel: play/pause instead of audio-source switch -->
+    <string name="settings_knob_play_pause_title">Steering wheel volume knob</string>
+    <string name="settings_knob_play_pause_desc">Pressing the knob pauses and resumes playback instead of switching the audio source. Needed after the firmware update that made the press change the source.</string>
+    <!-- Car system section: BYD head unit settings, not app settings -->
+    <string name="settings_car_system_header">Car system</string>
+    <string name="settings_car_language_title">Car interface language</string>
+    <string name="settings_car_language_desc">For UI7 firmware only. The button opens the hidden factory BYD dialog with the full list of languages. To switch to Russian: pick \"Русский язык\", then OK. To switch back: same button, \"English\", OK. Note: with Russian selected, automatic parking stops working for some owners. If you use automatic parking, keep English.</string>
+    <string name="settings_car_language_button">Open language picker</string>
+    <string name="settings_car_language_unavailable">The language dialog is not available on this firmware</string>
     <string name="settings_section_places_title">Places</string>
     <string name="settings_section_application_title">Application</string>
     <string name="settings_smart_home_section_title">Smart home</string>
@@ -123,6 +132,16 @@
     <string name="settings_abrp_location_label">Send coordinates to ABRP</string>
     <string name="settings_abrp_location_description">Adds the car GPS position and heading to telemetry. Off by default: ABRP on DiLink reads location itself. Turn on if the ABRP car marker lags behind the real position.</string>
     <string name="settings_abrp_save_button">Save ABRP</string>
+    <string name="settings_webhook_section_header">Webhook - telemetry</string>
+    <string name="settings_webhook_label">Live data -> your own server</string>
+    <string name="settings_webhook_description">The same JSON that goes to ABRP (SOC, power, temperatures, odometer, tire pressure, charging) is sent as a POST request to your URL: once per second while driving, once every 8 seconds while charging, once every 30 seconds while parked. Coordinates are not sent by default.</string>
+    <string name="settings_webhook_url_label">URL (https://)</string>
+    <string name="settings_webhook_secret_label">Secret (Authorization: Bearer header), optional</string>
+    <string name="settings_webhook_location_label">Send coordinates to the webhook</string>
+    <string name="settings_webhook_location_description">Adds the car GPS position and heading to the JSON.</string>
+    <string name="settings_webhook_save_button">Save webhook</string>
+    <string name="settings_webhook_saved">Webhook saved</string>
+    <string name="settings_webhook_invalid_url">Invalid URL</string>
     <string name="settings_openrouter_section_header">OpenRouter</string>
     <string name="settings_openrouter_api_key_label">OpenRouter API Key</string>
     <string name="settings_openrouter_model_selected">Model: %1$s</string>
@@ -146,7 +165,7 @@
     <string name="orb_agent">Agent:</string>
     <string name="settings_voice_native_assistant_header">Native BYD voice assistant</string>
     <string name="settings_voice_disable_native_label">Disable built-in voice assistant</string>
-    <string name="settings_voice_disable_native_description">Hides the native BYD voice assistant so it does not interrupt. Reversible.</string>
+    <string name="settings_voice_disable_native_description">Hides the native BYD voice assistant so it does not interrupt. The Shortcuts app (quick commands) disappears with it, it is part of the assistant. Reversible: turn the toggle off and restart the head unit, both come back.</string>
     <string name="settings_voice_native_assistant_reboot_note">Takes effect after restarting the head unit.</string>
     <string name="settings_widget_opacity_label">Opacity</string>
     <string name="settings_widget_scale_label">Size</string>
@@ -321,6 +340,13 @@
     <string name="automation_trigger_type_button_press">Button press</string>
     <string name="automation_trigger_button_label">Button %1$d</string>
     <string name="automation_trigger_button_picker_label">Button</string>
+    <string name="automation_trigger_type_steering_key">Steering-wheel key</string>
+    <string name="automation_trigger_steering_key_picker_label">Steering-wheel key</string>
+    <string name="automation_trigger_steering_key_unassigned">Key not assigned</string>
+    <string name="automation_trigger_steering_key_assign">assign</string>
+    <string name="automation_steering_key_occupied_projection">This key turns navigation on the instrument cluster on. Free it up in Settings, Display section, or pick another one.</string>
+    <string name="automation_steering_key_occupied_voice">This key calls the BYDMate voice assistant. Change the key in Settings, Voice agent section, or pick another one.</string>
+    <string name="automation_steering_key_occupied_knob">The knob press is taken by play/pause. Turn it off in Settings, Display section, or pick another key.</string>
     <string name="automation_trigger_type_voice">Voice</string>
     <string name="automation_trigger_voice_phrase_label">Trigger phrase</string>
     <string name="automation_voice_phrase_empty">Voice phrase is empty</string>
@@ -937,6 +963,15 @@
     <string name="auto_a11y_move_up">Move up</string>
     <string name="auto_a11y_move_down">Move down</string>
     <string name="auto_a11y_run_now">Run now</string>
+    <!-- safety gate block reasons (ActionDispatcher.BlockReason) -->
+    <string name="gate_speed_unknown">Speed unknown</string>
+    <string name="gate_sunroof_speed">Sunroof opening blocked at %1$d km/h (&gt;80)</string>
+    <string name="gate_windows_speed">Window opening blocked at %1$d km/h (&gt;120)</string>
+    <string name="gate_unlock_speed_unknown">Speed unknown, doors stay locked</string>
+    <string name="gate_unlock_speed">Door unlocking blocked at %1$d km/h (&gt;30)</string>
+    <string name="gate_forbidden_command">Forbidden command</string>
+    <string name="gate_frunk_speed_unknown">Speed unknown, cannot open the front trunk</string>
+    <string name="gate_frunk_moving">The front trunk opens only when parked (speed %1$d km/h)</string>
 
     <!-- Voice control (Phase 0) -->
     <string name="settings_section_voice_agent">Voice agent</string>
@@ -948,6 +983,7 @@
     <string name="voice_thinking">Thinking</string>
     <string name="voice_error_model_missing">Voice model is not downloaded. Get it in Settings, Voice agent section.</string>
     <string name="voice_error_lang_not_ru">Voice commands understand Russian speech only. Set Voice language to Russian in Settings.</string>
+    <string name="voice_block_park_required">Park required</string>
 
     <!-- GigaAM v3: free-form Russian speech recognition (offline) -->
     <string name="settings_asr_gigaam_title">Speech recognition</string>
@@ -1028,6 +1064,10 @@
     <string name="settings_agent_gender_male">Male</string>
     <string name="settings_agent_gender_female">Female</string>
     <string name="settings_agent_gender_hint">Applies to all voices: each source has a male and a female option</string>
+    <string name="settings_agent_memory_title">Driver memory</string>
+    <string name="settings_agent_memory_hint">The agent remembers your name and lasting preferences when you tell it to. Say “forget …” to drop a single fact</string>
+    <string name="settings_agent_memory_empty">Nothing remembered yet</string>
+    <string name="settings_agent_memory_forget_all">Forget everything</string>
 
     <!-- Voice agent (Phase 1) -->
     <string name="agent_enable_title">Voice AI agent</string>
@@ -1193,6 +1233,7 @@
     <string name="settings_split_mechanism_freeform">BYDMate windows</string>
     <string name="settings_split_mechanism_native">Native split</string>
     <string name="settings_split_mechanism_native_hint">The split is done by the car\'s firmware. The look depends on the firmware: either two panes at one-third and two-thirds, or half and half with the second app picked on screen.</string>
+    <string name="settings_split_mechanism_platformized_hint">On this firmware the car itself splits the screen: the 1/3 and 2/3 panes, the divider and the swap gesture are native. BYDMate only starts the chosen pair and returns an app to its pane.</string>
     <string name="settings_split_try_native_hint">Try the Native split mode.</string>
     <string name="split_feature_disabled">Split screen is disabled in settings</string>
 </resources>

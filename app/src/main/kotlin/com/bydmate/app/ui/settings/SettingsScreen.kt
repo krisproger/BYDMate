@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.provider.Settings as AndroidSettings
+import android.widget.Toast
 import com.bydmate.app.camera.BlindSpotPositionOverlay
 import com.bydmate.app.camera.BlindSpotPreferences
 import com.bydmate.app.cluster.ClusterEntryPoint
@@ -130,6 +131,7 @@ import com.bydmate.app.voice.TtsGender
 import com.bydmate.app.voice.TtsVoiceCatalog
 import com.bydmate.app.voice.online.TtsRouter
 import com.bydmate.app.hud.HudController
+import com.bydmate.app.split.Split37Engine
 import com.bydmate.app.split.SplitFreeformVerdict
 import com.bydmate.app.split.SplitRole
 import com.bydmate.app.split.applyPick
@@ -578,6 +580,53 @@ private fun IntegrationsSection(state: SettingsUiState, viewModel: SettingsViewM
                 style = SettingButtonStyle.Primary,
             )
             state.abrpSaveStatus?.let {
+                Text(it, color = AccentGreen, fontSize = 12.sp)
+            }
+        }
+    }
+
+    SectionHeader(text = stringResource(R.string.settings_webhook_section_header))
+    Card(
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(containerColor = CardSurfaceElevated),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(
+            modifier = Modifier.padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            SettingToggleRow(
+                title = stringResource(R.string.settings_webhook_label),
+                description = stringResource(R.string.settings_webhook_description),
+                checked = state.webhookEnabled,
+                onCheckedChange = { viewModel.toggleWebhook(it) },
+            )
+            SettingsTextField(
+                label = stringResource(R.string.settings_webhook_url_label),
+                value = state.webhookUrl,
+                onValueChange = { viewModel.updateWebhookUrl(it) },
+                keyboardType = KeyboardType.Uri,
+            )
+            SettingsTextField(
+                label = stringResource(R.string.settings_webhook_secret_label),
+                value = state.webhookSecret,
+                onValueChange = { viewModel.updateWebhookSecret(it) },
+                keyboardType = KeyboardType.Password,
+                secret = true
+            )
+            SettingToggleRow(
+                title = stringResource(R.string.settings_webhook_location_label),
+                description = stringResource(R.string.settings_webhook_location_description),
+                checked = state.webhookSendLocation,
+                onCheckedChange = { viewModel.toggleWebhookSendLocation(it) },
+            )
+            SettingActionRow(
+                title = stringResource(R.string.settings_webhook_save_button),
+                buttonLabel = stringResource(R.string.settings_webhook_save_button),
+                onClick = { viewModel.saveWebhookSettings() },
+                style = SettingButtonStyle.Primary,
+            )
+            state.webhookSaveStatus?.let {
                 Text(it, color = AccentGreen, fontSize = 12.sp)
             }
         }
@@ -1433,6 +1482,9 @@ private fun SplitSection() {
     val splitFreeformUnsupported = remember {
         SplitFreeformVerdict(clusterPrefs, bootCount = { -1 }).unsupported()
     }
+    // Platformized firmware (OTA V1.6): the native 3:7 split is the only mechanism there, so the
+    // screen states the fact instead of offering a choice that has one outcome.
+    val split37Firmware = remember { Split37Engine.isPlatformizedFirmware() }
     var clearStatus by remember { mutableStateOf<String?>(null) }
     // "?" badge on the section header; the text it toggles is the first block inside the card.
     var howToOpen by remember { mutableStateOf(false) }
@@ -1484,7 +1536,10 @@ private fun SplitSection() {
                         force = !enabled)
                 },
             )
-            if (splitEnabled) {
+            if (splitEnabled && split37Firmware) {
+                SettingDivider()
+                SettingHint(text = stringResource(R.string.settings_split_mechanism_platformized_hint))
+            } else if (splitEnabled) {
                 SettingDivider()
                 // Mechanism selector: our own freeform panes vs handing the pair to the
                 // firmware's split. Native is the fallback for firmwares that gate freeform.
@@ -1511,8 +1566,10 @@ private fun SplitSection() {
             // enable_freeform_support is read once at boot, so a restart is required. Once the
             // firmware is proven to ignore the flag (#139) the reboot advice is wrong — say so,
             // and point at the native mechanism, which does not depend on that flag. Both hints
-            // are about freeform only, so the native mechanism hides them.
-            if (splitEnabled && !nativeMode && (splitFreeformUnsupported || splitRebootPending)) {
+            // are about freeform only, so the native mechanism — and a firmware that only has
+            // the native one — hides them.
+            if (splitEnabled && !nativeMode && !split37Firmware &&
+                (splitFreeformUnsupported || splitRebootPending)) {
                 val hint = if (splitFreeformUnsupported) {
                     stringResource(R.string.split_freeform_unsupported_hint) + " " +
                         stringResource(R.string.settings_split_try_native_hint)
@@ -1629,22 +1686,28 @@ private fun SplitSection() {
     }
 }
 
-private sealed interface LearnUiState {
+internal sealed interface LearnUiState {
     data object Waiting : LearnUiState
     data class Rejected(val keyCode: Int) : LearnUiState
+    /** Assignable key, but already taken by another feature; [reason] explains which one. */
+    data class Occupied(val keyCode: Int, val reason: String) : LearnUiState
     data class Captured(val keyCode: Int) : LearnUiState
     data object TimedOut : LearnUiState
 }
 
 /**
  * Learn-the-button dialog. Puts SteeringWheelKeyService into learn mode while open and collects the
- * captured key from its StateFlow (same process). States: Waiting → (Rejected loops) → Captured
- * (confirm) / TimedOut. learnMode is always cleared on dispose.
+ * captured key from its StateFlow (same process). States: Waiting → (Rejected/Occupied loop) →
+ * Captured (confirm) / TimedOut. learnMode is always cleared on dispose.
+ *
+ * [occupiedReason] lets a caller veto an otherwise assignable key: a non-null text means "this key
+ * already does something else" and is shown while the dialog keeps waiting for another key.
  */
 @Composable
-private fun LearnButtonDialog(
+internal fun LearnButtonDialog(
     onSave: (Int) -> Unit,
     onDismiss: () -> Unit,
+    occupiedReason: (Int) -> String? = { null },
 ) {
     var state by remember { mutableStateOf<LearnUiState>(LearnUiState.Waiting) }
 
@@ -1665,20 +1728,27 @@ private fun LearnButtonDialog(
         SteeringWheelKeyService.capturedKey
             .filterNotNull()
             .collect { r ->
-                state = if (r.assignable) {
-                    SteeringWheelKeyService.learnMode = false
-                    LearnUiState.Captured(r.keyCode)
-                } else {
-                    LearnUiState.Rejected(r.keyCode)
+                val occupied = if (r.assignable) occupiedReason(r.keyCode) else null
+                state = when {
+                    !r.assignable -> LearnUiState.Rejected(r.keyCode)
+                    // The service clears learn mode on capture; re-arm so the next press is caught.
+                    occupied != null -> {
+                        SteeringWheelKeyService.learnMode = true
+                        LearnUiState.Occupied(r.keyCode, occupied)
+                    }
+                    else -> {
+                        SteeringWheelKeyService.learnMode = false
+                        LearnUiState.Captured(r.keyCode)
+                    }
                 }
             }
     }
 
     // Timeout while still waiting/rejected (no assignable capture yet).
     LaunchedEffect(state) {
-        if (state is LearnUiState.Waiting || state is LearnUiState.Rejected) {
+        if (state.isWaitingForKey()) {
             delay(10_000)
-            if (state is LearnUiState.Waiting || state is LearnUiState.Rejected) {
+            if (state.isWaitingForKey()) {
                 SteeringWheelKeyService.learnMode = false
                 state = LearnUiState.TimedOut
             }
@@ -1707,6 +1777,13 @@ private fun LearnButtonDialog(
                 is LearnUiState.Rejected -> Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(stringResource(R.string.learn_button_rejected))
                     Text(steeringButtonLabel(s.keyCode), color = TextSecondary, fontSize = 12.sp)
+                }
+                is LearnUiState.Occupied -> Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(s.reason)
+                    Text(
+                        "${steeringButtonLabel(s.keyCode)} (${s.keyCode})",
+                        color = TextSecondary, fontSize = 12.sp,
+                    )
                 }
                 is LearnUiState.Captured -> Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(stringResource(R.string.learn_button_captured))
@@ -1742,6 +1819,10 @@ private fun LearnButtonDialog(
     )
 }
 
+/** True while the dialog is still expecting a key press (nothing accepted yet). */
+private fun LearnUiState.isWaitingForKey(): Boolean =
+    this is LearnUiState.Waiting || this is LearnUiState.Rejected || this is LearnUiState.Occupied
+
 
 @Composable
 private fun ServiceSection(
@@ -1749,6 +1830,12 @@ private fun ServiceSection(
     viewModel: SettingsViewModel,
 ) {
     val context = LocalContext.current
+    val clusterPrefs = remember {
+        context.getSharedPreferences(ClusterProjectionManager.PREFS_NAME, Context.MODE_PRIVATE)
+    }
+    val clusterEntryPoint = remember {
+        EntryPointAccessors.fromApplication(context.applicationContext, ClusterEntryPoint::class.java)
+    }
 
     // SAF picker for restore — must be declared at composable top level
     val restoreLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
@@ -1900,6 +1987,67 @@ private fun ServiceSection(
             },
             containerColor = CardSurfaceElevated,
         )
+    }
+
+    // Car system: settings that change the head unit itself, not the app.
+    SectionHeader(text = stringResource(R.string.settings_car_system_header))
+
+    // Volume-knob press → play/pause. The interception lives in the a11y key filter, so turning
+    // the switch on self-enables it via the daemon, exactly like the projection card.
+    var knobPlayPause by remember {
+        mutableStateOf(clusterPrefs.getBoolean(ClusterProjectionManager.KEY_KNOB_PLAY_PAUSE, false))
+    }
+    Card(
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(containerColor = CardSurfaceElevated),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(modifier = Modifier.padding(horizontal = 12.dp)) {
+            SettingToggleRow(
+                title = stringResource(R.string.settings_knob_play_pause_title),
+                description = stringResource(R.string.settings_knob_play_pause_desc),
+                checked = knobPlayPause,
+                onCheckedChange = {
+                    knobPlayPause = it
+                    clusterPrefs.edit().putBoolean(ClusterProjectionManager.KEY_KNOB_PLAY_PAUSE, it).apply()
+                    if (it) {
+                        ClusterProjectionManager.enableStarControl(
+                            clusterEntryPoint.helperClient(), clusterEntryPoint.helperBootstrap())
+                    }
+                },
+            )
+        }
+    }
+
+    // Hidden BYD language dialog (UI7 only). We never write the locale ourselves — the button just
+    // opens the factory dialog, and the card stays hidden on firmwares that do not ship it.
+    val localeIntent = remember { Intent("android.settings.LOCALE_SETTINGS1") }
+    val localeDialogAvailable = remember {
+        context.packageManager.resolveActivity(localeIntent, 0) != null
+    }
+    if (localeDialogAvailable) {
+        val localeUnavailableToast = stringResource(R.string.settings_car_language_unavailable)
+        Card(
+            shape = RoundedCornerShape(12.dp),
+            colors = CardDefaults.cardColors(containerColor = CardSurfaceElevated),
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Column(modifier = Modifier.padding(12.dp)) {
+                SettingActionRow(
+                    title = stringResource(R.string.settings_car_language_title),
+                    description = stringResource(R.string.settings_car_language_desc),
+                    buttonLabel = stringResource(R.string.settings_car_language_button),
+                    onClick = {
+                        runCatching {
+                            context.startActivity(
+                                Intent(localeIntent).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                        }.onFailure {
+                            Toast.makeText(context, localeUnavailableToast, Toast.LENGTH_LONG).show()
+                        }
+                    },
+                )
+            }
+        }
     }
 
     // Autostart status card
@@ -2240,6 +2388,36 @@ private fun VoiceSettingsContent(
                 selectedIndex = genderIds.indexOf(state.agentGender).coerceAtLeast(0),
                 onSelect = { viewModel.setAgentGender(genderIds[it]) },
             )
+        }
+    }
+
+    // Driver memory: what the agent remembered about the driver, plus a way to wipe it
+    Card(
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(containerColor = CardSurfaceElevated),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(modifier = Modifier.padding(12.dp)) {
+            // Facts can appear or vanish while Settings is closed -- reload them on entry.
+            LaunchedEffect(Unit) { viewModel.refreshAgentMemory() }
+            SettingActionRow(
+                title = stringResource(R.string.settings_agent_memory_title),
+                description = stringResource(R.string.settings_agent_memory_hint),
+                buttonLabel = stringResource(R.string.settings_agent_memory_forget_all),
+                onClick = { viewModel.forgetAgentMemory() },
+                enabled = state.agentMemoryFacts.isNotEmpty(),
+            )
+            if (state.agentMemoryFacts.isEmpty()) {
+                Text(
+                    stringResource(R.string.settings_agent_memory_empty),
+                    color = TextSecondary,
+                    fontSize = 12.sp,
+                )
+            } else {
+                state.agentMemoryFacts.forEach { fact ->
+                    Text("\u2022 $fact", color = TextSecondary, fontSize = 12.sp, lineHeight = 17.sp)
+                }
+            }
         }
     }
 

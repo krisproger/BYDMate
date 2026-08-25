@@ -1,5 +1,6 @@
 package com.bydmate.app.data.vehicle
 
+import android.graphics.Rect
 import android.os.DeadObjectException
 import android.os.IBinder
 import android.os.Parcel
@@ -36,6 +37,31 @@ data class SplitTaskState(
     val displayId: Int = 0,
 )
 
+/**
+ * One root task of the vehicle's native 3:7 split, as reported by TX_SPLIT37_AREA_INFO.
+ * [rootTaskId] is the reparent target for [HelperClient.split37MoveTask]; the bounds are the
+ * pane geometry the firmware itself gave that root (the narrow pane keeps its width across a swap).
+ */
+data class Split37Root(
+    val rootTaskId: Int,
+    val left: Int,
+    val top: Int,
+    val right: Int,
+    val bottom: Int,
+)
+
+/**
+ * Snapshot of the native split areas (TX_SPLIT37_AREA_INFO).
+ * [areaMode] is getScreenAreaInfoForMulti(): 3 = split on screen, 4 = fullscreen, -1 unreadable.
+ * A pane is null when the firmware reports no root for that area or its bounds are unreadable.
+ */
+data class Split37AreaInfo(
+    val areaMode: Int,
+    val narrow: Split37Root?,
+    val wide: Split37Root?,
+    val full: Split37Root?,
+)
+
 /** Result of the daemon's direct freeform launch (TX_LAUNCH_FREEFORM). */
 enum class FreeformLaunchResult { OK, UNAVAILABLE, FAILED }
 
@@ -59,6 +85,9 @@ enum class RaiseOutcome { REFUSED, NO_REPLY, RAISED }
  * [pkg] is the package name (from topActivity/baseActivity ComponentName).
  * [windowingMode] and [activityType] come from WindowConfiguration.
  * [displayId] is the Android display the task lives on: 0 = main, 2 = cluster fission on L3.
+ * [visible] is RunningTaskInfo.isVisible; null when the daemon did not report it (one too old to
+ * write the field, or a ROM without it) — the daemon lists MRU tasks, so a task nobody can see is
+ * in there too, and a caller that cares must treat null as "do not know".
  * Null from [HelperClient.getTopTask] when the daemon is unreachable, too old (pre-Q3 daemon
  * makes transact return false → null), or no running task is found.
  */
@@ -68,6 +97,7 @@ data class TopTaskInfo(
     val windowingMode: Int,
     val activityType: Int,
     val displayId: Int,
+    val visible: Boolean? = null,
 )
 
 /**
@@ -287,6 +317,66 @@ interface HelperClient {
      * false → null, so COVERED detection auto-disarms against old daemons), or no task is found.
      */
     suspend fun getTopTask(): TopTaskInfo?
+
+    /**
+     * Raises the vehicle's native 3:7 split (TX_SPLIT37_ENTER) and returns the area mode read
+     * right after the call: 3 = split is on screen, 4 = still fullscreen.
+     *
+     * Null on any transport failure and on a daemon that does not know the verb (an old daemon
+     * makes transact return false) — callers must read null as "daemon outdated / native split
+     * unavailable through this channel", never as a firmware verdict about the split itself.
+     * Null also covers every non-OK daemon status: SPLIT37_FAILED and SPLIT37_UNSUPPORTED are
+     * indistinguishable here, the two are told apart only in the daemon's log.
+     */
+    suspend fun split37Enter(): Int?
+
+    /**
+     * Geometry of the native split areas (TX_SPLIT37_AREA_INFO): the narrow pane, the wide pane
+     * and the fullscreen root, plus the current area mode. Null on any transport failure or on any
+     * non-OK daemon status — SPLIT37_FAILED and SPLIT37_UNSUPPORTED (firmware without the split
+     * surface) both arrive as null, the two are told apart only in the daemon's log.
+     */
+    suspend fun split37AreaInfo(): Split37AreaInfo?
+
+    /**
+     * Reparents [taskId] into the native split root [rootTaskId] and, when [bounds] is a non-empty
+     * rect, resizes the task to it (TX_SPLIT37_MOVE_TASK). Pass null to move without resizing.
+     * [toTop] false parks the task at the bottom of the root instead of raising it — the first half
+     * of the bounce that gives a task already living in that root a new order.
+     * False on any transport failure and on any non-OK daemon status (SPLIT37_FAILED and
+     * SPLIT37_UNSUPPORTED are indistinguishable here — see the daemon's log).
+     */
+    suspend fun split37MoveTask(
+        taskId: Int,
+        rootTaskId: Int,
+        bounds: Rect?,
+        toTop: Boolean = true,
+    ): Boolean
+
+    /**
+     * Area [taskId] currently lives in (TX_SPLIT37_TASK_AREA): 1 = narrow pane, 2 = wide pane,
+     * 4 = fullscreen (the task escaped the split). Null on any transport failure and on any non-OK
+     * status (SPLIT37_FAILED and SPLIT37_UNSUPPORTED are indistinguishable here — see the log).
+     */
+    suspend fun split37TaskArea(taskId: Int): Int?
+
+    /**
+     * Swaps the two split sides (TX_SPLIT37_SWAP). The roots keep their sizes, so the narrow pane
+     * simply changes edge. False on any transport failure and on any non-OK daemon status
+     * (SPLIT37_FAILED and SPLIT37_UNSUPPORTED are indistinguishable here — see the daemon's log).
+     */
+    suspend fun split37Swap(): Boolean
+
+    /**
+     * Switches the split container mode (TX_SPLIT37_CHANGE_MODE): 102 hands the whole screen to the
+     * wide container, which is how the split leaves the screen. Returns the area mode read right
+     * after the call: 1 = only the narrow container, 2 = only the wide one, 3 = split, 4 = fullscreen.
+     *
+     * Null on any transport failure and on a daemon that does not know the verb (an old daemon makes
+     * transact return false), exactly like [split37Enter] — callers must read null as "daemon
+     * outdated", never as a firmware verdict. Null also covers every non-OK daemon status.
+     */
+    suspend fun split37ChangeMode(mode: Int): Int?
 }
 
 @Singleton
@@ -627,8 +717,94 @@ open class HelperClientImpl @Inject constructor() : HelperClient {
             val windowingMode = reply.readInt()
             val activityType = reply.readInt()
             val displayId = reply.readInt()
-            TopTaskInfo(pkg, taskId, windowingMode, activityType, displayId)
+            // Trailing visibility flag: absent on a daemon that predates it, -1 when the ROM has
+            // no isVisible field. Both are "unknown" (null), never a synthesised true.
+            val visible = if (reply.dataAvail() >= 4) {
+                when (reply.readInt()) {
+                    1 -> true
+                    0 -> false
+                    else -> null
+                }
+            } else {
+                null
+            }
+            TopTaskInfo(pkg, taskId, windowingMode, activityType, displayId, visible)
         }
+
+    override suspend fun split37Enter(): Int? =
+        transactParsed(HelperBinderProtocol.TX_SPLIT37_ENTER, { }) { reply ->
+            if (reply.dataAvail() < 8) return@transactParsed null
+            val status = reply.readInt()
+            val areaMode = reply.readInt()
+            if (status == HelperBinderProtocol.SPLIT37_OK) areaMode else null
+        }
+
+    override suspend fun split37AreaInfo(): Split37AreaInfo? =
+        transactParsed(HelperBinderProtocol.TX_SPLIT37_AREA_INFO, { }) { reply ->
+            if (reply.dataAvail() < 8) return@transactParsed null
+            val status = reply.readInt()
+            val areaMode = reply.readInt()
+            if (status != HelperBinderProtocol.SPLIT37_OK) return@transactParsed null
+            // 3 areas × (rootTaskId + 4 bounds ints) = 60 bytes; the daemon writes them even on
+            // its failure paths, so a short reply here means a truncated/foreign transport.
+            if (reply.dataAvail() < 60) return@transactParsed null
+            val narrow = readSplit37Root(reply)
+            val wide = readSplit37Root(reply)
+            val full = readSplit37Root(reply)
+            Split37AreaInfo(areaMode, narrow, wide, full)
+        }
+
+    // RAISE_TIMEOUT_MS, not the default 2s: this verb spawns `am stack move-task`, and a process
+    // spawn can outrun REQ_TIMEOUT_MS on cold DiLink hardware (same reasoning as raiseFreeformTask).
+    override suspend fun split37MoveTask(
+        taskId: Int,
+        rootTaskId: Int,
+        bounds: Rect?,
+        toTop: Boolean,
+    ): Boolean =
+        transactParsed(HelperBinderProtocol.TX_SPLIT37_MOVE_TASK, { d ->
+            d.writeInt(taskId); d.writeInt(rootTaskId)
+            // A null rect is written as an empty one — the daemon skips the resize on right<=left.
+            d.writeInt(bounds?.left ?: 0); d.writeInt(bounds?.top ?: 0)
+            d.writeInt(bounds?.right ?: 0); d.writeInt(bounds?.bottom ?: 0)
+            // Trailing arg: an old daemon simply never reads it and keeps moving tasks on top.
+            d.writeInt(if (toTop) 1 else 0)
+        }, timeoutMs = RAISE_TIMEOUT_MS) { reply ->
+            if (reply.dataAvail() < 4) return@transactParsed false
+            reply.readInt() == HelperBinderProtocol.SPLIT37_OK
+        } ?: false
+
+    override suspend fun split37TaskArea(taskId: Int): Int? =
+        transactParsed(HelperBinderProtocol.TX_SPLIT37_TASK_AREA, { it.writeInt(taskId) }) { reply ->
+            if (reply.dataAvail() < 8) return@transactParsed null
+            val status = reply.readInt()
+            val areaId = reply.readInt()
+            if (status == HelperBinderProtocol.SPLIT37_OK) areaId else null
+        }
+
+    override suspend fun split37Swap(): Boolean =
+        transactParsed(HelperBinderProtocol.TX_SPLIT37_SWAP, { }) { reply ->
+            if (reply.dataAvail() < 4) return@transactParsed false
+            reply.readInt() == HelperBinderProtocol.SPLIT37_OK
+        } ?: false
+
+    override suspend fun split37ChangeMode(mode: Int): Int? =
+        transactParsed(HelperBinderProtocol.TX_SPLIT37_CHANGE_MODE, { it.writeInt(mode) }) { reply ->
+            if (reply.dataAvail() < 8) return@transactParsed null
+            val status = reply.readInt()
+            val areaMode = reply.readInt()
+            if (status == HelperBinderProtocol.SPLIT37_OK) areaMode else null
+        }
+
+    /** Reads one (rootTaskId, l, t, r, b) block of a TX_SPLIT37_AREA_INFO reply; null = area absent. */
+    private fun readSplit37Root(reply: Parcel): Split37Root? {
+        val rootTaskId = reply.readInt()
+        val left = reply.readInt()
+        val top = reply.readInt()
+        val right = reply.readInt()
+        val bottom = reply.readInt()
+        return if (rootTaskId < 0) null else Split37Root(rootTaskId, left, top, right, bottom)
+    }
 
     override suspend fun setAppHidden(packageName: String, hidden: Boolean): Boolean =
         statusOk(HelperBinderProtocol.TX_SET_APP_HIDDEN) {

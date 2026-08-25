@@ -21,6 +21,7 @@ import android.view.View
 import android.view.WindowManager
 import android.widget.FrameLayout
 import com.bydmate.app.cluster.CENTER_OFFSET_PCT
+import com.bydmate.app.cluster.ClusterFrameUi7
 import com.bydmate.app.cluster.ClusterGeometry
 import com.bydmate.app.cluster.ClusterJournal
 import com.bydmate.app.cluster.ClusterMode
@@ -32,6 +33,7 @@ import com.bydmate.app.data.autoservice.SentinelDecoder
 import com.bydmate.app.data.vehicle.BatchReadItem
 import com.bydmate.app.data.vehicle.HelperClient
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExecutorCoroutineDispatcher
@@ -100,6 +102,9 @@ class BlindSpotController @Inject constructor(
     private var clusterOnMainScreen = false
     /** Geometry the PiP window currently carries; a mismatch with the settings re-applies it. */
     private var appliedPipRect: Rect? = null
+    /** Projection-overlay attach counter as of our own attach; a later value means the overlay
+     *  was (re)added above our cluster window and we have to re-attach on top of it. */
+    private var lastOverlayEpoch = 0
     /** Windows whose removeView threw for a reason other than "already detached": retried on
      *  every tick and in [stop] rather than dropped, or the overlay would leak. */
     private val pendingDetach = mutableListOf<PreviewWindow>()
@@ -182,6 +187,19 @@ class BlindSpotController @Inject constructor(
             awaitTeardown("feature switched off")
             cancelFastLoop()
             return
+        }
+
+        // Our cluster window and the navigation projection overlay share the display AND the
+        // window type, so z-order is attach order: an overlay added after us covers us. Only a
+        // full teardown fixes it — the camera surfaces are bound to these windows' TextureViews,
+        // so re-attaching means re-opening the camera anyway. The mirrored main-screen fallback
+        // is on another display and never collides.
+        if (clusterWindow != null && !clusterOnMainScreen) {
+            val epoch = ClusterProjectionManager.overlayEpoch()
+            if (epoch != lastOverlayEpoch) {
+                awaitTeardown("projection overlay restacked above camera")
+                lastOverlayEpoch = epoch
+            }
         }
 
         val glow = prefs.bsdGlow
@@ -304,6 +322,10 @@ class BlindSpotController @Inject constructor(
         clusterWindow != null || pipWindow != null || cameraOpen || compositorPowered || compositorTarget
 
     private fun attachWindows() {
+        // Read BEFORE the addView below: an overlay added between this read and our attach shows
+        // up as a mismatch on the next tick, which costs one redundant re-attach — the other
+        // order would miss it and leave the camera buried under the overlay.
+        lastOverlayEpoch = ClusterProjectionManager.overlayEpoch()
         // No projection display (non-Leopard-3 trims, or the cluster is not fissioned): the left
         // camera falls back to a mirrored window on the main screen, and setClusterContainerMode
         // is never called — powering a compositor that does not exist would black the cluster out.
@@ -489,24 +511,58 @@ class BlindSpotController @Inject constructor(
      * The projection check happens HERE, immediately before the call: a navigation projection
      * that started while this was queued owns the compositor, and powering it down would black
      * out the cluster under it.
+     *
+     * The two directions are deliberately asymmetric. Powering UP first and framing after keeps
+     * the frame off a cluster that has nothing of ours on it. On the way DOWN the frame is
+     * restored FIRST: the power-down blocks ~1 s over binder, and while CENTER still points at
+     * the Android layer the driver sees it go black (on-car 2026-08-23). Restoring the stock
+     * frame first makes the cut invisible — CENTER is already pointing away from our layer.
      */
     private suspend fun applyCompositor(on: Boolean) {
         // Journal into the cluster ring, not a camera one: #135 is about what the cluster shows
         // after a blind-spot alert, and the compositor switches of both owners have to be
         // readable on one timeline.
         if (!on && ClusterProjectionManager.isProjectionActive()) {
+            // The camera stops needing the cluster right here even though the compositor stays
+            // powered for the projection; the frame's own owner set decides whether that writes
+            // anything back to the car.
+            holdClusterFrame(false)
             Log.i(TAG, "compositor stays up: projection active")
             clusterJournal.append("camera: compositor power-down skipped (projection active)")
             compositorPowered = false
             compositorTarget = false
             return
         }
+        // Unconditional on the way down, before the blocking call: restore is fail-soft and
+        // idempotent, and a power-down that then fails only parks the camera window off screen
+        // under a stock frame — the next transition retries the power-down, and a show re-applies
+        // the frame.
+        if (!on) holdClusterFrame(false)
         val ok = runCatching { helper.setClusterContainerMode(on) }.getOrDefault(false)
         // State follows the confirmed result: a failed call leaves the previous state, so the
         // next transition retries instead of assuming the cluster is where we asked for.
         if (ok) compositorPowered = on else compositorTarget = compositorPowered
         Log.i(TAG, "compositor power-${if (on) "up" else "down"} ok=$ok")
         clusterJournal.append("camera: compositor power-${if (on) "up" else "down"} ok=$ok")
+        // Power-up only: an unpowered cluster has nothing of ours to frame, so the frame waits
+        // for the CONFIRMED power-up.
+        if (on && ok) holdClusterFrame(true)
+    }
+
+    /**
+     * Takes or releases the platformized firmware's cluster frame (OTA V1.6) for the camera, on the
+     * instance the navigation projection uses: a second one would race its re-assert job. A no-op
+     * on every other firmware, and fail-soft: a frame problem must never break the camera flow.
+     */
+    private suspend fun holdClusterFrame(hold: Boolean) {
+        runCatching {
+            val frame = ClusterProjectionManager.frameFor(context)
+            if (hold) frame.apply(helper, ClusterFrameUi7.Owner.CAMERA)
+            else frame.restore(helper, ClusterFrameUi7.Owner.CAMERA)
+        }.onFailure {
+            if (it is CancellationException) throw it
+            Log.w(TAG, "cluster frame ${if (hold) "apply" else "restore"} failed: ${it.message}")
+        }
     }
 
     /** Runs the teardown in [ownScope] (so a cancelled fast loop cannot abandon a half-closed

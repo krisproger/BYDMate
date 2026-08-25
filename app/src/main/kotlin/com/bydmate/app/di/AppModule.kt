@@ -599,6 +599,22 @@ object AppModule {
         // Alternative to our freeform split for firmwares that gate the freeform flag (#139).
         // Only reached while the native-mode switch is on; off for the whole fleet by default.
         nativeLauncher = com.bydmate.app.split.NativeSplitLauncher(ctx, journal),
+        // The firmware's own 3:7 split (OTA V1.6). isApplicable() is false on every other
+        // firmware, so this is inert for the rest of the fleet.
+        split37 = com.bydmate.app.split.Split37Engine(
+            helper = helper,
+            journal = journal,
+            nowMs = android.os.SystemClock::elapsedRealtime,
+            // Only an app the user could have started from a launcher is adopted into a pane. The
+            // engine asks on every tick for as long as a foreign package sits on top of the panes,
+            // so the PackageManager answer is remembered per package.
+            isLauncherApp = java.util.concurrent.ConcurrentHashMap<String, Boolean>().let { cache ->
+                { pkg: String ->
+                    cache.getOrPut(pkg) { ctx.packageManager.getLaunchIntentForPackage(pkg) != null }
+                }
+            },
+            ownPackage = ctx.packageName,
+        ),
         // #139: BOOT_COUNT only moves on a real boot, so it is what proves the reboot the hint
         // asked for has happened and freeform is still unavailable. -1 keeps the verdict inert.
         verdict = com.bydmate.app.split.SplitFreeformVerdict(

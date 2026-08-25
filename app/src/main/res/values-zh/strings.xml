@@ -110,6 +110,16 @@
     <string name="settings_abrp_location_label">向 ABRP 发送坐标</string>
     <string name="settings_abrp_location_description">将车辆的 GPS 位置和航向加入遥测。默认关闭：DiLink 上的 ABRP 会自行读取位置。若 ABRP 中的车辆箭头落后于实际位置，可开启此项。</string>
     <string name="settings_abrp_save_button">保存 ABRP</string>
+    <string name="settings_webhook_section_header">Webhook - 遥测</string>
+    <string name="settings_webhook_label">实时数据 -> 自己的服务器</string>
+    <string name="settings_webhook_description">与发送至 ABRP 相同的 JSON（SOC、功率、温度、里程表、胎压、充电）通过 POST 请求发送到您的 URL：行驶时每秒一次，充电时每 8 秒一次，停车时每 30 秒一次。默认不发送坐标。</string>
+    <string name="settings_webhook_url_label">URL（https://）</string>
+    <string name="settings_webhook_secret_label">密钥（Authorization: Bearer 请求头），可选</string>
+    <string name="settings_webhook_location_label">向 Webhook 发送坐标</string>
+    <string name="settings_webhook_location_description">将车辆的 GPS 位置和航向加入 JSON。</string>
+    <string name="settings_webhook_save_button">保存 Webhook</string>
+    <string name="settings_webhook_saved">Webhook 已保存</string>
+    <string name="settings_webhook_invalid_url">URL 无效</string>
     <string name="settings_openrouter_section_header">OpenRouter</string>
     <string name="settings_openrouter_api_key_label">OpenRouter API 密钥</string>
     <string name="settings_openrouter_model_selected">模型：%1$s</string>
@@ -137,7 +147,7 @@
     <string name="orb_agent">助手：</string>
     <string name="settings_voice_native_assistant_header">BYD 原车语音助手</string>
     <string name="settings_voice_disable_native_label">关闭原车语音助手</string>
-    <string name="settings_voice_disable_native_description">隐藏 BYD 内置语音助手，避免其打断。可恢复。</string>
+    <string name="settings_voice_disable_native_description">隐藏 BYD 内置语音助手，避免其打断。快捷指令应用会随之消失，它是语音助手的一部分。可恢复：关闭此开关并重启车机，两者都会回来。</string>
     <string name="settings_voice_native_assistant_reboot_note">重启车机后生效。</string>
     <string name="settings_widget_opacity_label">不透明度</string>
     <string name="settings_widget_scale_label">大小</string>
@@ -349,6 +359,13 @@
     <string name="automation_trigger_type_button_press">按钮按下</string>
     <string name="automation_trigger_button_label">按钮 %1$d</string>
     <string name="automation_trigger_button_picker_label">按钮</string>
+    <string name="automation_trigger_type_steering_key">方向盘按键</string>
+    <string name="automation_trigger_steering_key_picker_label">方向盘按键</string>
+    <string name="automation_trigger_steering_key_unassigned">未分配按键</string>
+    <string name="automation_trigger_steering_key_assign">分配</string>
+    <string name="automation_steering_key_occupied_projection">该按键用于开启仪表盘导航。请在设置的显示部分释放该按键，或选择其他按键。</string>
+    <string name="automation_steering_key_occupied_voice">该按键用于呼出 BYDMate 语音助手。请在设置的语音智能体部分更改按键，或选择其他按键。</string>
+    <string name="automation_steering_key_occupied_knob">旋钮按下已被播放/暂停功能占用。请在设置的显示部分关闭该功能，或选择其他按键。</string>
     <string name="automation_trigger_type_voice">语音</string>
     <string name="automation_trigger_voice_phrase_label">触发短语</string>
     <string name="automation_voice_phrase_empty">语音短语为空</string>
@@ -762,6 +779,15 @@
     <string name="automation_action_media_volume_label">音量</string>
     <string name="learn_button_again">重新学习</string>
     <string name="learn_button_cancel">取消</string>
+    <!-- Volume knob on the steering wheel: play/pause instead of audio-source switch -->
+    <string name="settings_knob_play_pause_title">方向盘音量旋钮</string>
+    <string name="settings_knob_play_pause_desc">按下旋钮暂停和继续播放，而不是切换音源。固件更新后按下变为切换音源时需要开启。</string>
+    <!-- Car system section: BYD head unit settings, not app settings -->
+    <string name="settings_car_system_header">车机系统</string>
+    <string name="settings_car_language_title">车机界面语言</string>
+    <string name="settings_car_language_desc">仅适用于 UI7 固件。按钮会打开比亚迪隐藏的原厂语言对话框，其中有完整语言列表。切换到俄语：选择“Русский язык”，然后点 OK。切回来：同一个按钮，选择“English”，点 OK。注意：部分车主在俄语下自动泊车会失效。如果您使用自动泊车，请保留 English。</string>
+    <string name="settings_car_language_button">打开语言选择</string>
+    <string name="settings_car_language_unavailable">此固件不支持语言选择对话框</string>
     <string name="learn_button_captured">已识别按键：</string>
     <string name="learn_button_dialog_title">分配按键</string>
     <string name="learn_button_rejected">无法分配此按键，请按其他按键。</string>
@@ -1052,6 +1078,15 @@
     <string name="auto_a11y_move_up">上移</string>
     <string name="auto_a11y_move_down">下移</string>
     <string name="auto_a11y_run_now">立即执行</string>
+    <!-- safety gate block reasons (ActionDispatcher.BlockReason) -->
+    <string name="gate_speed_unknown">车速未知</string>
+    <string name="gate_sunroof_speed">车速 %1$d 公里/小时（&gt;80），禁止打开天窗</string>
+    <string name="gate_windows_speed">车速 %1$d 公里/小时（&gt;120），禁止打开车窗</string>
+    <string name="gate_unlock_speed_unknown">车速未知，不解锁车门</string>
+    <string name="gate_unlock_speed">车速 %1$d 公里/小时（&gt;30），禁止解锁车门</string>
+    <string name="gate_forbidden_command">禁止的命令</string>
+    <string name="gate_frunk_speed_unknown">车速未知，无法打开前备箱</string>
+    <string name="gate_frunk_moving">前备箱仅在停车时可打开（车速 %1$d 公里/小时）</string>
 
     <!-- Voice control (Phase 0) -->
     <string name="settings_section_voice_agent">语音智能体</string>
@@ -1063,6 +1098,7 @@
     <string name="voice_thinking">思考中</string>
     <string name="voice_error_model_missing">语音模型尚未下载。请在设置的语音助手部分下载。</string>
     <string name="voice_error_lang_not_ru">语音命令目前仅支持俄语。请在设置中将语音语言设为俄语。</string>
+    <string name="voice_block_park_required">需要挂入 P 挡</string>
 
     <!-- GigaAM v3: free-form Russian speech recognition (offline) -->
     <string name="settings_asr_gigaam_title">语音识别</string>
@@ -1143,6 +1179,10 @@
     <string name="settings_agent_gender_male">男声</string>
     <string name="settings_agent_gender_female">女声</string>
     <string name="settings_agent_gender_hint">对所有语音生效：每种音色都有男声和女声版本</string>
+    <string name="settings_agent_memory_title">驾驶员记忆</string>
+    <string name="settings_agent_memory_hint">当你告诉智能体时，它会记住你的名字和长期偏好。说“忘记……”即可删除某一条</string>
+    <string name="settings_agent_memory_empty">暂无记忆内容</string>
+    <string name="settings_agent_memory_forget_all">全部忘记</string>
 
     <!-- Voice agent (Phase 1) -->
     <string name="agent_enable_title">语音AI助手</string>
@@ -1307,6 +1347,7 @@
     <string name="settings_split_mechanism_freeform">BYDMate 窗口</string>
     <string name="settings_split_mechanism_native">系统分屏</string>
     <string name="settings_split_mechanism_native_hint">分屏由车机固件完成。显示效果取决于固件：可能是 1/3 和 2/3 两个窗口，也可能是左右对半并在屏幕上选择第二个应用。</string>
+    <string name="settings_split_mechanism_platformized_hint">在该固件上由车机自己分屏：1/3 和 2/3 两个窗口、分隔条和左右交换手势都是原生的。BYDMate 只负责启动所选的应用组合，并把跑出去的应用送回它的窗口。</string>
     <string name="settings_split_try_native_hint">试试“系统分屏”方式。</string>
     <string name="split_feature_disabled">分屏功能已在设置中关闭</string>
 </resources>
