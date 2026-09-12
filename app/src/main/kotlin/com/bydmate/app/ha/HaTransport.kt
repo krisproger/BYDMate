@@ -19,10 +19,10 @@ import javax.inject.Singleton
 
 /**
  * Транспорт телеметрии в Home Assistant: OkHttp POST на
- * `{base_url}/api/byd_diplus` (custom component diplus2hass).
+ * `{base_url}/api/cartelemetry` (custom component CARTelemetry).
  *
- * Payload совпадает с тем, что шлёт наш DiPlus-to-hass APK
- * (см. `DiPlus-to-hass/.../HassClient.java`): `{car_name, app_version, ts, batch}`.
+ * Payload совпадает с открытым контрактом CARTelemetry (см.
+ * `docs/cartelemetry/api/spec/`): `{car_name, vvn, firmware, app_version, ts, batch}`.
  * Bearer-токен из настроек; на 429/5xx — экспоненциальный backoff
  * 12s→300s (аналогично HassClient/HassClient статике); single-flight
  * на уровне транспортного вызова. Словарь `s` строится
@@ -87,13 +87,15 @@ class HaTransport @Inject constructor(
 
             val payload = JSONObject().apply {
                 put("car_name", carName)
+                put("vvn", "")
+                put("firmware", "")
                 put("app_version", BuildConfig.VERSION_NAME)
                 val maxTs = batch.maxOf { it.timestampSec }
                 put("ts", maxTs)
                 put("batch", json)
             }
 
-            val url = baseUrl.trimEnd('/') + "/api/byd_diplus"
+            val url = baseUrl.trimEnd('/') + "/api/cartelemetry"
             val request = Request.Builder()
                 .url(url)
                 .header("Authorization", "Bearer $token")

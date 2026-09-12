@@ -24,7 +24,7 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * Опрашивает HA на предмет команд (`GET /api/byd_diplus/commands`), выполняет
+ * Опрашивает HA на предмет команд (`GET /api/cartelemetry/commands`), выполняет
  * их через [ActionDispatcher] и подтверждает результат (`POST .../commands`).
  * Жизненный цикл (start/stop) управляется из TrackingService по `KEY_HA_ENABLED`.
  *
@@ -106,7 +106,7 @@ class HaCommandPoller @Inject constructor(
 
         if (!inFlight.compareAndSet(false, true)) return
         try {
-            val pollUrl = "$baseUrl/api/byd_diplus/commands?car_name=${java.net.URLEncoder.encode(carName, "UTF-8")}"
+            val pollUrl = "$baseUrl/api/cartelemetry/commands?car_name=${java.net.URLEncoder.encode(carName, "UTF-8")}"
             val response = httpClient.newCall(Request.Builder()
                 .url(pollUrl)
                 .header("Authorization", "Bearer $token")
@@ -169,7 +169,7 @@ class HaCommandPoller @Inject constructor(
         val body = buildAckJson(o.commandId, o.status, o.message)
         try {
             httpClient.newCall(Request.Builder()
-                .url("$baseUrl/api/byd_diplus/commands")
+                .url("$baseUrl/api/cartelemetry/commands")
                 .header("Authorization", "Bearer $token")
                 .post(body.toRequestBody(JSON))
                 .build())

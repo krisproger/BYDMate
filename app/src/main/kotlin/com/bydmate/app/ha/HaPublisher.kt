@@ -39,6 +39,7 @@ class HaPublisher @Inject constructor(
     private val sharedAdaptiveLoop: SharedAdaptiveLoop,
     private val transport: HaTransport,
     private val settingsRepository: SettingsRepository,
+    private val haInfo: HaInfo,
 ) {
     companion object {
         /** Интервал флаша буфера: реже, чем rate-limit HA (1 req/s), есть запас. */
@@ -85,6 +86,7 @@ class HaPublisher @Inject constructor(
                 }
             }
         }
+        s.launch { haInfo.check(context) }
         HaLog.append(context, "Publisher: started")
     }
 

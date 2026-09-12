@@ -705,7 +705,7 @@ class TrackingService : Service(), LocationListener {
         _isRunning.value = true
         ChainLog.append(this, "TrackingService fully started")
 
-        // Команды из HA (diplus2hass): стартует, если включено в настройках.
+        // Команды из HA (CARTelemetry): стартует, если включено в настройках.
         serviceScope.launch {
             val enabled = settingsRepository.getString(
                 com.bydmate.app.data.repository.SettingsRepository.KEY_HA_ENABLED, "false"
@@ -713,7 +713,7 @@ class TrackingService : Service(), LocationListener {
             if (enabled) haCommandPoller.start()
         }
 
-        // HA-телеметрия (diplus2hass): стартует, если включено в настройках.
+        // HA-телеметрия (CARTelemetry): стартует, если включено в настройках.
         serviceScope.launch {
             val enabled = settingsRepository.getString(
                 com.bydmate.app.data.repository.SettingsRepository.KEY_HA_ENABLED, "false"

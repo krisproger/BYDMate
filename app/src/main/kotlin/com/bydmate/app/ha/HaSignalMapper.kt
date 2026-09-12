@@ -7,12 +7,12 @@ import org.json.JSONObject
  * Маппит [DiParsData] → HA-Словарь `s` для снапшота `{t, g, s}`.
  *
  * Набор ключей и их значения должны соответствовать `custom_components/
- * diplus2hass/const.py` (NUMERIC_SENSORS / ENUM_SENSORS / BINARY_SENSORS).
+ * CARTelemetry/const.py` (NUMERIC_SENSORS / ENUM_SENSORS / BINARY_SENSORS).
  * Сверено с `info/BYDMate_HA_telemetry_map.md` (Фаза 0): здесь базовый
  * поднабор из полей, которые маппятся 1:1 и уже имеют HA-сущности.
  *
  * Числовые поля уходят числами; enum-поля — строками-метками в тех же
- * регистрах, что шлёт наш DiPlus-to-hass APK (совместимость с state_map
+ * регистрах, что шлёт наш Car2Hass APK (совместимость с state_map
  * командных select-сущностей). Значение null просто пропускается — HA
  * хранит последнее известное значение сигнала.
  */
@@ -73,6 +73,17 @@ object HaSignalMapper {
         data.lightHigh?.let { s.put("high_beam", onOffLabel(it)) }
         drlLabel(data.drl)?.let { s.put("drl", it) }                        // 1=on,2=off
         turnSignalLabel(data.turnSignal)?.let { s.put("turn_signal", it) }  // mask 2=left,4=right,6=hazard
+        seatbeltLabel(data.seatbeltFR)?.let { s.put("passenger_seatbelt", it) }
+
+        // ── Extended (sensors wave / tech panel) — 1:1 numeric pass-through ──
+        data.seatHeatDriver?.let { s.put("driver_seat_heat", it) }      // 0..5 level
+        data.seatVentDriver?.let { s.put("driver_seat_vent", it) }
+        data.seatHeatPassenger?.let { s.put("passenger_seat_heat", it) }
+        data.seatVentPassenger?.let { s.put("passenger_seat_vent", it) }
+        data.pedalAccel?.let { s.put("accel_pedal", it) }               // 0-100%
+        data.pedalBrake?.let { s.put("brake_pedal", it) }
+        data.motorRpmFront?.let { s.put("front_motor_rpm", it) }
+        data.motorRpmRear?.let { s.put("rear_motor_rpm", it) }
 
         return s
     }
@@ -80,7 +91,7 @@ object HaSignalMapper {
     /** true если в словаре есть хоть одно значение — снапшот полезен для HA. */
     fun hasAnySignal(s: JSONObject): Boolean = s.length() > 0
 
-    // ── label helpers (регистр совпадает с приложением DiPlus-to-hass) ─────
+    // ── label helpers (регистр совпадает с приложением Car2Hass) ─────
 
     private fun onOffLabel(v: Int): String? = when (v) {
         0 -> "off"

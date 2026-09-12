@@ -3,7 +3,7 @@ package com.bydmate.app.ha
 import com.bydmate.app.data.local.entity.ActionDef
 
 /**
- * Маппит `command_id` из HA (`/api/byd_diplus/commands`) в [ActionDef] для
+ * Маппит `command_id` из HA (`/api/cartelemetry/commands`) в [ActionDef] для
  * `ActionDispatcher`. Подмножество команд на старт; полный перенос
  * `sensor_command_map` — отдельной задачей. Значение параметра из
  * `params.value` подставляется в команду (температура °C, проценты окон).

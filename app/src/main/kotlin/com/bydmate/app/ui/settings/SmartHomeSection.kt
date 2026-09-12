@@ -19,7 +19,7 @@ import androidx.compose.ui.text.input.KeyboardType
 
 /**
  * Раздел «Умный дом»: карточка HA-телеметрия (Home Assistant) — отправка
- * состояния авто в diplus2hass и приём команд из HA. Вынесен из
+ * состояния авто в CARTelemetry и приём команд из HA. Вынесен из
  * SettingsScreen.kt, чтобы не раздувать файл.
  */
 @Composable
@@ -36,7 +36,7 @@ internal fun SmartHomeSection(state: SettingsUiState, viewModel: SettingsViewMod
         ) {
             SettingToggleRow(
                 title = "HA-телеметрия",
-                description = "Отправка состояния авто в diplus2hass и приём команд",
+                description = "Отправка состояния авто в CARTelemetry и приём команд",
                 checked = state.haEnabled,
                 onCheckedChange = { viewModel.toggleHa(it) },
             )
@@ -82,7 +82,7 @@ internal fun SmartHomeSection(state: SettingsUiState, viewModel: SettingsViewMod
             state.haSaveStatus?.let {
                 Text(it, color = AccentGreen, fontSize = 12.sp)
             }
-            SettingHint("Снапшоты — в /api/byd_diplus, команды — из /api/byd_diplus/commands")
+            SettingHint("Снапшоты — в /api/cartelemetry, команды — из /api/cartelemetry/commands")
         }
     }
 }
