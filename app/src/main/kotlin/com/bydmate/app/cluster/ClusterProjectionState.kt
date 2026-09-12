@@ -128,6 +128,18 @@ fun shouldRecoverCompositor(markerSet: Boolean, mode: ClusterMode, autoContainer
  */
 fun shouldPowerDownCompositor(markerSet: Boolean): Boolean = markerSet
 
+/**
+ * The blind-spot camera drives the cluster compositor (16 on show, 18 -> pause -> 0 on hide) only
+ * when auto-container is ON, exactly like the projection does. With it OFF the user runs the
+ * cluster by hand: on firmware that shows the projection display inside a native widget (VV,
+ * 2026-08-28) the 16 flips the cluster into full projection mode and hides ADAS, and no exit
+ * sequence (18 alone or 18 -> 0) restores the widget without a manual tab switch. The camera
+ * window sits on the same display, in the same crop, so it is visible there without any ИПЦ write.
+ * The mirrored main-screen fallback never needs the compositor either.
+ */
+fun cameraNeedsCompositor(autoContainer: Boolean, clusterWindowAttached: Boolean, clusterOnMainScreen: Boolean): Boolean =
+    autoContainer && clusterWindowAttached && !clusterOnMainScreen
+
 /** Direct-task crash recovery fires only when a marker survives AND no projection is live. */
 fun shouldRecoverDirectTask(markerDisplayId: Int, mode: ClusterMode): Boolean =
     markerDisplayId != -1 && mode == ClusterMode.OFF
@@ -161,3 +173,19 @@ fun shouldClearDirectMarker(resetOk: Boolean, taskFound: Boolean, modeOk: Boolea
  */
 internal fun freeformFlagValue(directEnabled: Boolean, splitEnabled: Boolean = false): Int =
     if (directEnabled || splitEnabled) 1 else 0
+
+/**
+ * Which of the cluster's projection surfaces to render on, by name. Firmwares with the new
+ * interface expose two: "..._0" (the full cluster band) and "..._1" (the native mini-map/TBT
+ * band). The panel composites "..._1" in Full mode, so that is the default pick; on some
+ * 2606+ firmwares it is only the top strip of the cluster, and [preferFull] switches the pick
+ * to "..._0". Either preference falls back to the other suffix, then to any projection
+ * surface, so a car exposing a single display keeps working. Null = nothing to pick from.
+ */
+fun pickProjectionDisplayName(names: List<String>, preferFull: Boolean): String? {
+    val preferred = if (preferFull) "_0" else "_1"
+    val other = if (preferFull) "_1" else "_0"
+    return names.firstOrNull { it.endsWith(preferred) }
+        ?: names.firstOrNull { it.endsWith(other) }
+        ?: names.firstOrNull()
+}

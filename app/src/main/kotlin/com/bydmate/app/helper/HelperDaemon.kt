@@ -2,11 +2,14 @@
 package com.bydmate.app.helper
 
 import com.bydmate.app.BuildConfig
+import android.content.ComponentName
 import android.content.Context
+import android.content.Intent
 import android.graphics.Rect
 import android.hardware.display.DisplayManager
 import android.hardware.display.VirtualDisplay
 import android.os.Binder
+import android.os.Bundle
 import android.view.Surface
 import java.util.concurrent.ConcurrentHashMap
 import android.os.IBinder
@@ -122,14 +125,16 @@ internal fun acquireSingleOwnerLock(path: String): Pair<FileChannel, FileLock>? 
 /**
  * Shell-uid binder daemon entry point. Spawned by the app via:
  *   CLASSPATH=<apk> app_process /system/bin \
- *     --nice-name=bydmate_helper com.bydmate.app.helper.HelperDaemon <appUid>
+ *     --nice-name=bydmate_helper com.bydmate.app.helper.HelperDaemon <appUid> [<spawnToken>]
  *
  * Lifecycle:
- *   1. Parse expectedUid from args[0].
+ *   1. Parse expectedUid from args[0] and the optional spawn token from args[1].
  *   2. Acquire single-owner file lock — exits with ALREADY_RUNNING if held.
  *   3. Resolve autoservice IBinder reflectively.
- *   4. Register a Binder stub under SERVICE_NAME via ServiceManager.addService.
- *   5. Print READY and keepalive with Looper.loop().
+ *   4. Register a Binder stub under SERVICE_NAME via ServiceManager.addService; on firmwares
+ *      that refuse the registration to the shell domain (#64), fall back to handing the same
+ *      Binder to the app in a broadcast (see [publishBinderByBroadcast]).
+ *   5. Print READY via=<transport> and keepalive with Looper.loop().
  *
  * Hidden-API note: this daemon runs under app_process (tool context), NOT a normal
  * app process. The hidden-API enforcement layer is only active for app processes, so
@@ -142,6 +147,10 @@ fun main(args: Array<String>) {
         // non-daemon threads alive, so a bare `return` from main() would hang the JVM.
         exitProcess(2)
     }
+    // Spawn token of THIS spawn — echoed back to the app in the broadcast fallback so it can
+    // tell our Binder from anything else that reaches the exported receiver. Absent when an
+    // older app version did the spawn (then only the addService path is available).
+    val spawnToken = spawnTokenFrom(args)
 
     // Step 1: single-owner lock — prevents duplicate daemons.
     val lockPair = acquireSingleOwnerLock(LOCK_PATH)
@@ -158,9 +167,11 @@ fun main(args: Array<String>) {
 
     // Identity of the spawned process. addService is only permitted from the shell domain,
     // so a wrong uid or SELinux context explains a registration refusal on its own (#64).
+    // The token itself never reaches the log — it authenticates the broadcast fallback, and the
+    // daemon log is world-readable on the device. Only its presence is diagnostic.
     println(
         "BOOT uid=${android.os.Process.myUid()} pid=${android.os.Process.myPid()} " +
-            "selinux=${readSelinuxContext()}"
+            "selinux=${readSelinuxContext()} token=${if (spawnToken != null) "set" else "absent"}"
     )
     System.out.flush()
 
@@ -191,6 +202,13 @@ fun main(args: Array<String>) {
         override fun onTransact(code: Int, data: Parcel, reply: Parcel?, flags: Int): Boolean {
             // Uid gate first — only our app may call.
             if (Binder.getCallingUid() != expectedUid) return false
+
+            // IBinder.getInterfaceDescriptor() on the app side is a plain INTERFACE_TRANSACTION
+            // with NO interface token in the parcel, so it must be answered by the base class
+            // BEFORE enforceInterface — otherwise the broadcast-delivered binder (#64/#148) is
+            // rejected as descriptor_mismatch (field log 2026-08-25, storm-1986). Name lookups via
+            // ServiceManager never asked for the descriptor, which is why DiLink 5 never noticed.
+            if (code == IBinder.INTERFACE_TRANSACTION) return super.onTransact(code, data, reply, flags)
 
             data.enforceInterface(HelperBinderProtocol.DESCRIPTOR)
 
@@ -347,7 +365,85 @@ fun main(args: Array<String>) {
 
                 HelperBinderProtocol.TX_ENABLE_ACCESSIBILITY -> runCatching {
                     val ok = enableAccessibilityService()
+                    // Only reached when the app found the service NOT running: snapshot the
+                    // framework's own view so a field log names the exact state (#a11y DiLink 4).
+                    // Off the binder thread: a slow dumpsys must not delay the reply (the client
+                    // holds its mutex and a 15 s budget; a late reply would read as reassert=false).
+                    logA11yFrameworkStateAsync(ok)
                     reply?.writeInt(if (ok) 0 else -1); reply?.writeInt(0)
+                    true
+                }.getOrElse { reply?.writeInt(-1); reply?.writeInt(0); true }
+
+                HelperBinderProtocol.TX_RECOVER_ACCESSIBILITY -> runCatching {
+                    val ok = recoverAccessibilityService()
+                    reply?.writeInt(if (ok) 0 else -1); reply?.writeInt(0)
+                    true
+                }.getOrElse { reply?.writeInt(-1); reply?.writeInt(0); true }
+
+                HelperBinderProtocol.TX_CLUSTER_DISPLAY_DIAG -> runCatching {
+                    // Reply immediately: the snapshot runs 8-9 shell commands (up to 4 s each) on
+                    // its own thread, so the binder thread and the app's HelperClient mutex are
+                    // never held behind a slow dumpsys. Rate-limited, not once-only: the user
+                    // usually retries after turning log recording on, and `logcat -c` at recording
+                    // start wipes an earlier snapshot.
+                    // Inside the rate window the cached snapshot is re-emitted instead, so a
+                    // fresh recording session still gets the full cdiag block.
+                    val now = android.os.SystemClock.elapsedRealtime()
+                    val started = synchronized(clusterDiagLock) {
+                        val running = clusterDiagThread?.isAlive == true
+                        if (running) { clusterDiagReplayWhenDone = true; true }
+                        else if (now - clusterDiagLastMs < CLUSTER_DIAG_MIN_INTERVAL_MS) {
+                            val cached = clusterDiagCache
+                            if (cached != null) {
+                                android.util.Log.i("bydmate_helper", "cdiag: replaying cached snapshot (${cached.size} lines)")
+                                cached.forEach { android.util.Log.i("bydmate_helper", it) }
+                            }
+                            cached != null
+                        } else {
+                            clusterDiagLastMs = now
+                            clusterDiagThread = Thread({
+                                val lines = runCatching { logClusterDisplayDiag() }.getOrNull()
+                                val replay = synchronized(clusterDiagLock) {
+                                    if (lines != null) clusterDiagCache = lines
+                                    clusterDiagReplayWhenDone.also { clusterDiagReplayWhenDone = false }
+                                }
+                                // A request arrived mid-collection (typically: recording just
+                                // started and wiped logcat) - emit the whole block once more.
+                                if (replay && lines != null) {
+                                    android.util.Log.i("bydmate_helper", "cdiag: replaying snapshot after collection (${lines.size} lines)")
+                                    lines.forEach { android.util.Log.i("bydmate_helper", it) }
+                                }
+                            }, "bydmate-cdiag").apply { isDaemon = true; start() }
+                            true
+                        }
+                    }
+                    reply?.writeInt(if (started) 0 else 1); reply?.writeInt(0)
+                    true
+                }.getOrElse { reply?.writeInt(-1); reply?.writeInt(0); true }
+
+                HelperBinderProtocol.TX_LIST_DISPLAYS -> runCatching {
+                    // Synchronous, unlike TX_CLUSTER_DISPLAY_DIAG: the caller is a projection
+                    // attempt that cannot continue without the answer. One bounded dumpsys
+                    // (~100-300 ms), read-only.
+                    // 256 KiB, not the snapshot default: the "Logical Displays" section this
+                    // parses comes AFTER the device list, so a dump cut at 64 KiB on a rich
+                    // firmware would report no display at all.
+                    val devices = ClusterDisplayDiag.parseDisplayDevices(
+                        shExecBounded("dumpsys display", maxBytes = 256 * 1024))
+                    android.util.Log.i("bydmate_helper", "TX_LIST_DISPLAYS: ${devices.size} displays " +
+                        devices.joinToString { "${it.id}:\"${it.name}\" ${it.width}x${it.height}" }.take(300))
+                    reply?.writeInt(0)
+                    reply?.writeInt(devices.size)
+                    devices.forEach { d ->
+                        reply?.writeInt(d.id)
+                        reply?.writeString(d.name)
+                        reply?.writeInt(d.width)
+                        reply?.writeInt(d.height)
+                        reply?.writeInt(d.densityDpi)
+                        reply?.writeString(d.ownerPkg ?: "")
+                        reply?.writeInt(d.ownerUid)
+                        reply?.writeString(d.flags.joinToString(","))
+                    }
                     true
                 }.getOrElse { reply?.writeInt(-1); reply?.writeInt(0); true }
 
@@ -671,18 +767,36 @@ fun main(args: Array<String>) {
     }
     helperBinder.attachInterface(null, HelperBinderProtocol.DESCRIPTOR)
 
-    // Step 4: register the stub with ServiceManager.
+    // Step 4: register the stub with ServiceManager, or publish it by broadcast when the
+    // firmware refuses the registration to the shell domain (#64 / #148).
+    var transport = "servicemanager"
     try {
         smCls.getMethod("addService", String::class.java, IBinder::class.java)
             .invoke(null, HelperBinderProtocol.SERVICE_NAME, helperBinder)
     } catch (e: Exception) {
         System.err.println("ERR: addService ${describeBootstrapFailure(e)}")
-        // exitProcess so the OS releases the file lock we hold; a bare return would
-        // leave a hung lock-holding daemon and block every future spawn.
-        exitProcess(4)
+        when (decideRegistrationFallback(systemContext != null, spawnToken != null)) {
+            RegistrationFallback.EXIT_NO_CONTEXT -> {
+                System.err.println("ERR: broadcast fallback unavailable: no system context")
+                // exitProcess so the OS releases the file lock we hold; a bare return would
+                // leave a hung lock-holding daemon and block every future spawn.
+                exitProcess(4)
+            }
+            RegistrationFallback.EXIT_NO_TOKEN -> {
+                System.err.println("ERR: broadcast fallback unavailable: no spawn token")
+                exitProcess(4)
+            }
+            RegistrationFallback.BROADCAST -> try {
+                publishBinderByBroadcast(systemContext!!, helperBinder, spawnToken!!)
+                transport = "broadcast"
+            } catch (be: Exception) {
+                System.err.println("ERR: broadcast ${describeBootstrapFailure(be)}")
+                exitProcess(5)
+            }
+        }
     }
 
-    System.out.println("READY pid=${android.os.Process.myPid()}")
+    System.out.println("READY via=$transport pid=${android.os.Process.myPid()}")
     System.out.flush()
 
     // Keepalive: Looper.loop() blocks this thread indefinitely so main() never returns
@@ -691,6 +805,59 @@ fun main(args: Array<String>) {
     // AppRuntime::onStarted — Looper.loop() plays NO role in transaction dispatch here;
     // it is purely a blocking keepalive for the main thread.
     Looper.loop()
+}
+
+/**
+ * Spawn token passed as args[1]. Absent (or blank) when an app version older than the
+ * broadcast fallback did the spawn — then only the addService path can deliver the Binder.
+ */
+internal fun spawnTokenFrom(args: Array<String>): String? =
+    args.getOrNull(1)?.takeIf { it.isNotBlank() }
+
+/** What to do after ServiceManager.addService refused us — see [decideRegistrationFallback]. */
+internal enum class RegistrationFallback {
+    /** No system Context: nothing can send a broadcast from this process. */
+    EXIT_NO_CONTEXT,
+    /** No spawn token: the app could not authenticate the intent, so we must not send one. */
+    EXIT_NO_TOKEN,
+    /** Hand the Binder to the app in a broadcast. */
+    BROADCAST,
+}
+
+/**
+ * The whole decision after a refused addService, split out from the Android-dependent sender
+ * so it can be unit-tested. Both preconditions are hard: without a Context there is no
+ * sendBroadcast, and without a token the app has no way to tell our intent from a forged one
+ * (the receiver is exported — the sender is the shell uid, not our own process).
+ */
+internal fun decideRegistrationFallback(hasSystemContext: Boolean, hasToken: Boolean): RegistrationFallback =
+    when {
+        !hasSystemContext -> RegistrationFallback.EXIT_NO_CONTEXT
+        !hasToken -> RegistrationFallback.EXIT_NO_TOKEN
+        else -> RegistrationFallback.BROADCAST
+    }
+
+/**
+ * Hands [binder] to the app in an explicit broadcast — the D+ (aps_diplus) recipe for firmwares
+ * where the shell domain may transact with autoservice but may not register a service name.
+ *
+ * Explicit component + package so no other app can receive it, FLAG_INCLUDE_STOPPED_PACKAGES so
+ * a force-stopped app (the state right after an update) is still woken. The token lets the app
+ * authenticate the sender; version and pid are diagnostics for the dump.
+ */
+private fun publishBinderByBroadcast(ctx: Context, binder: IBinder, token: String) {
+    val extras = Bundle().apply {
+        putBinder(HelperBinderProtocol.KEY_BINDER, binder)
+        putString(HelperBinderProtocol.KEY_TOKEN, token)
+        putLong(HelperBinderProtocol.KEY_VERSION, BuildConfig.VERSION_CODE.toLong())
+        putInt(HelperBinderProtocol.KEY_PID, android.os.Process.myPid())
+    }
+    val intent = Intent(HelperBinderProtocol.ACTION_BINDER)
+        .setComponent(ComponentName(HelperBinderProtocol.APP_PACKAGE, HelperBinderProtocol.RECEIVER_CLASS))
+        .setPackage(HelperBinderProtocol.APP_PACKAGE)
+        .addFlags(Intent.FLAG_INCLUDE_STOPPED_PACKAGES)
+        .putExtra(HelperBinderProtocol.EXTRA_BUNDLE, extras)
+    ctx.sendBroadcast(intent)
 }
 
 // Trailing activityType int: absent when the caller predates the split touch fix →
@@ -1306,6 +1473,114 @@ internal fun shExecMerged(script: String, vararg args: String): String {
     return out.ifEmpty { "OK" }
 }
 
+/** Snapshot rate limit (see TX_CLUSTER_DISPLAY_DIAG): one at a time, at most one per minute. */
+private val clusterDiagLock = Any()
+private var clusterDiagThread: Thread? = null
+private var clusterDiagLastMs = Long.MIN_VALUE / 2
+private var clusterDiagCache: List<String>? = null
+private var clusterDiagReplayWhenDone = false
+private const val CLUSTER_DIAG_MIN_INTERVAL_MS = 60_000L
+
+/**
+ * Bounded variant of [shExecMerged] for the read-only diagnostic snapshot: a dumpsys on an unknown
+ * firmware can print megabytes or hang, and neither may stall the daemon's binder thread. stdout is
+ * drained on a background thread into a buffer capped at [maxBytes]; if the process outlives
+ * [timeoutMs] it is killed and whatever was read is returned with a `[timeout Nms]` marker line.
+ * Used ONLY by the diagnostic snapshots ([logClusterDisplayDiag], [logA11yFrameworkState]) — the
+ * production callers stay on [shExec]/[shExecMerged].
+ */
+private fun shExecBounded(script: String, timeoutMs: Long = 4000L, maxBytes: Int = 64 * 1024): String {
+    val process = ProcessBuilder("sh", "-c", script).redirectErrorStream(true).start()
+    val buffer = StringBuilder()
+    val reader = Thread {
+        runCatching {
+            process.inputStream.reader().use { stream ->
+                val chunk = CharArray(8192)
+                var total = 0
+                while (total < maxBytes) {
+                    val n = stream.read(chunk)
+                    if (n < 0) break
+                    val take = minOf(n, maxBytes - total)
+                    synchronized(buffer) { buffer.append(chunk, 0, take) }
+                    total += take
+                }
+            }
+        }
+    }
+    reader.isDaemon = true
+    reader.start()
+    val finished = process.waitFor(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS)
+    if (!finished) process.destroyForcibly()
+    reader.join(500L)
+    val out = synchronized(buffer) { buffer.toString() }.trim()
+    return if (finished) out else (out + "\n[timeout ${timeoutMs}ms]")
+}
+
+/**
+ * Read-only cluster-display snapshot for cars where the projection display never resolves
+ * (DiLink 3/4, issue #182). Collection only: props, the DisplayManager and SurfaceFlinger display
+ * lists, the projection services and which SurfaceControl methods are visible under shell uid.
+ * Nothing is invoked or written — no auto_container command, no SurfaceControl call, no settings.
+ * Every command is individually guarded so one failure still leaves the rest of the snapshot in
+ * the log, under the daemon tag the app's log recorder already captures.
+ */
+private fun logClusterDisplayDiag(): List<String> {
+    val tag = "bydmate_helper"
+    val emitted = ArrayList<String>()
+    var cmds = 0
+    var errors = 0
+    var timeouts = 0
+    fun run(script: String, timeoutMs: Long = 4000L, maxBytes: Int = 64 * 1024): String {
+        cmds++
+        val out = runCatching { shExecBounded(script, timeoutMs, maxBytes) }
+            .getOrElse { errors++; "" }
+        if (out.contains("[timeout ")) timeouts++
+        return out
+    }
+    fun emit(line: String) {
+        val full = "cdiag: " + line.take(300)
+        emitted += full
+        android.util.Log.i(tag, full)
+    }
+
+    val propScript = ClusterDisplayDiag.PROP_KEYS.joinToString("; ") { "echo $it=$(getprop $it)" }
+    emit(ClusterDisplayDiag.propsLine(run(propScript)) + " uid=${android.os.Process.myUid()}")
+    emit(ClusterDisplayDiag.bydPropsLine(run("getprop | grep '^\\[ro\\.byd\\.'")))
+    emit(ClusterDisplayDiag.servicesLine(
+        run("service list | grep -i container"),
+        run("service check auto_container"),
+        run("service check AutoContainer"),
+        run("ls /dev/graphics 2>/dev/null | tr '\\n' ' '"),
+    ))
+
+    val rawDisplay = run("dumpsys display")
+    ClusterDisplayDiag.displaySummaries(rawDisplay).forEach { emit("display: $it") }
+    val displays = ClusterDisplayDiag.displayLines(rawDisplay)
+    displays.kept.forEach { emit("display: $it") }
+    if (displays.dropped > 0) emit("display: +${displays.dropped} more matched lines dropped")
+
+    var sf = run("dumpsys SurfaceFlinger --displays")
+    if (ClusterDisplayDiag.surfaceFlingerFallbackNeeded(sf)) sf = run("dumpsys SurfaceFlinger")
+    val sfLines = ClusterDisplayDiag.surfaceFlingerLines(sf)
+    sfLines.kept.forEach { emit("sf: $it") }
+    if (sfLines.dropped > 0) emit("sf: +${sfLines.dropped} more matched lines dropped")
+
+    // Reflective visibility only: we report which SurfaceControl entry points this firmware has,
+    // and never call any of them. Hidden-API filtering can throw on some builds, hence the guard.
+    val probed = listOf(
+        "createDisplay", "destroyDisplay", "setDisplaySurface", "setDisplayProjection",
+        "setDisplayLayerStack", "getPhysicalDisplayIds", "getPhysicalDisplayToken", "getBuiltInDisplay",
+    )
+    runCatching {
+        val names = Class.forName("android.view.SurfaceControl").declaredMethods.map { it.name }.toSet()
+        val (present, missing) = probed.partition { it in names }
+        emit("surfacecontrol present=$present missing=$missing")
+    }.onFailure { emit("surfacecontrol unavailable: ${it.javaClass.simpleName}") }
+
+    emit("done cmds=$cmds errors=$errors timeouts=$timeouts")
+    return emitted
+}
+
 /** Single named gateway: pins all am/monkey prod callers to the merged-stream runner.
  *  Extracting a val (not an inline lambda at each site) means the wiring is detectable
  *  by tests — reverting any site back to shExec would break [ShExecMergedTest.amShell]. */
@@ -1379,6 +1654,95 @@ private fun enableAccessibilityService(): Boolean {
     // Verify read-back: our component is now listed AND accessibility is enabled.
     val after = (readSecure("enabled_accessibility_services") ?: return false).split(':').filter { it.isNotEmpty() }
     return after.any { canonicalComponent(it) == target } && readSecure("accessibility_enabled") == "1"
+}
+
+/**
+ * Recovers the a11y service on Android 10 after the firmware's quickboot force-stop parked our
+ * component in AccessibilityManagerService's UserState.mBindingServices (AOSP Q: no
+ * ACTION_PACKAGE_RESTARTED broadcast, so AMS re-binds into the dying package and the bind never
+ * completes; updateServicesLocked skips such components forever). A settings rewrite cannot leave
+ * that state — only PackageMonitor.onHandleForceStop clears it, which
+ * IActivityManager.forceStopPackage triggers. So: force-stop ourselves, re-enable, restart.
+ *
+ * The app is killed by step 1, so it never sees the reply; the daemon survives (shell uid, own
+ * process) and finishes the sequence. Kept dumb and logged — the SDK gate lives in the app.
+ */
+private fun recoverAccessibilityService(): Boolean {
+    val tag = "bydmate_helper"
+    val pkg = HelperBinderProtocol.APP_PACKAGE
+    android.util.Log.w(tag, "a11y recover: force-stopping $pkg (AOSP Q stuck binding)")
+    try {
+        forceStopPackage(pkg)
+    } catch (e: Throwable) {
+        android.util.Log.w(tag, "a11y recover: force-stop failed: ${e.javaClass.simpleName}: ${e.message}")
+        return false
+    }
+    Thread.sleep(700L)  // let AccessibilityManagerService process onHandleForceStop
+    // The app is dead from here on, so the restart goes out FIRST and does not depend on anything
+    // else in this function: a hung `settings` must not leave TrackingService stopped until boot.
+    // TrackingService is not exported, so shell uid cannot start it directly; BootReceiver is
+    // (BOOT_COMPLETED needs it) and its WorkManager chain starts the service. Explicit component +
+    // include-stopped-packages: the force-stop just put the package into the stopped state.
+    var am = ""
+    var restarted = false
+    for (attempt in 1..2) {
+        am = runCatching {
+            amShell(
+                "am broadcast --include-stopped-packages -a com.bydmate.app.action.RECOVER_START -n \"\$1\"",
+                listOf("$pkg/com.bydmate.app.service.BootReceiver"),
+            )
+        }.getOrElse { "broadcast failed: ${it.javaClass.simpleName}: ${it.message}" }
+        restarted = am.contains("Broadcast completed")
+        if (restarted) break
+        android.util.Log.w(tag, "a11y recover: restart broadcast attempt $attempt failed: ${am.take(200)}")
+        Thread.sleep(1000L)
+    }
+    // Re-assert the a11y setting: onHandleForceStop removed us from the enabled set as well.
+    val ok = try {
+        enableAccessibilityService()
+    } catch (e: Throwable) {
+        android.util.Log.w(tag, "a11y recover: re-assert failed: ${e.javaClass.simpleName}: ${e.message}")
+        false
+    }
+    android.util.Log.i(tag, "a11y recover: reassert=$ok restart=$restarted am=${am.take(200)}")
+    logA11yFrameworkStateAsync(ok)  // diagnostics only
+    return ok && restarted
+}
+
+/**
+ * Logs the framework's own accessibility bookkeeping after a re-assert, under the daemon tag the
+ * app's log recorder already captures. `dumpsys accessibility` prints the AOSP UserState sets
+ * (Bound / Enabled / Binding services) on one line each; `dumpsys activity services` shows whether
+ * ActivityManager still holds a ServiceRecord + connection for our key filter. Field evidence for
+ * the Android 10 "stuck in mBindingServices" case that a settings rewrite cannot leave.
+ * Read-only: two dumpsys calls, output trimmed to a handful of lines.
+ */
+private fun logA11yFrameworkStateAsync(reassertOk: Boolean) {
+    val t = Thread({ runCatching { logA11yFrameworkState(reassertOk) } }, "bydmate-a11ydiag")
+    t.isDaemon = true
+    t.start()
+}
+
+/** Diagnostics only; every dumpsys is time- and size-bounded so it can never wedge the daemon. */
+private fun logA11yFrameworkState(reassertOk: Boolean) {
+    val tag = "bydmate_helper"
+    val a11y = shExecBounded("dumpsys accessibility").lines()
+    val keep = a11y.filter { l ->
+        l.contains("User state[") || l.contains("services:{") || l.contains("bydmate", ignoreCase = true)
+    }.take(12)
+    android.util.Log.i(tag, "a11y state after reassert ok=$reassertOk: sdk=${android.os.Build.VERSION.SDK_INT} lines=${a11y.size}")
+    keep.forEach { android.util.Log.i(tag, "a11y: " + it.trim().take(300)) }
+    val pid = shExecBounded("pidof com.bydmate.app")
+    val stopped = shExecBounded("dumpsys package com.bydmate.app").lines()
+        .firstOrNull { it.contains("stopped=", ignoreCase = true) }?.trim()?.take(200)
+    android.util.Log.i(tag, "pkg: pid=${pid.ifEmpty { "none" }} $stopped")
+    val am = shExecBounded("dumpsys activity services com.bydmate.app").lines()
+    val start = am.indexOfFirst { it.contains("SteeringWheelKeyService") }
+    if (start < 0) {
+        android.util.Log.i(tag, "am: no ServiceRecord for SteeringWheelKeyService (lines=${am.size})")
+        return
+    }
+    am.drop(start).take(30).forEach { android.util.Log.i(tag, "am: " + it.trim().take(300)) }
 }
 
 /**
@@ -1609,8 +1973,8 @@ private fun launchApp(packageName: String): Boolean =
  *
  * The freeform placement itself is delegated to [ensureTypedFreeform] — the single owner of
  * the "a live freeform task must match its desired activityType" invariant, shared with
- * [setWindowingModeCompat]; [desiredActivityType] is the caller's choice (split panes:
- * STANDARD, cluster projection: RECENTS).
+ * [setWindowingModeCompat]; [desiredActivityType] is the caller's choice (STANDARD for both
+ * split panes and cluster projection).
  * Its [IllegalStateException] is mapped back to this function's Boolean contract.
  *
  * NOTE: the defaults of [taskIdForPackage] / [getActivityType] report "no task / unknown type",
@@ -1651,8 +2015,8 @@ internal fun raiseFreeformTaskCore(
  * Both freeform entry points — [raiseFreeformTaskCore] and the freeform branch of
  * [setWindowingModeCompat] — go through here instead of each deciding for itself.
  *
- * [desiredActivityType] is the caller's choice: split panes ask for STANDARD (392), cluster
- * projection asks for RECENTS. Migration note: v3.9 created its panes as RECENTS, so on the
+ * [desiredActivityType] is the caller's choice: split panes ask for STANDARD (392) and so does
+ * cluster projection (#134). Migration note: v3.9 created its panes as RECENTS, so on the
  * first 392 split the live panes are re-typed through the remove branch below.
  *
  * Three cases, by [liveActivityType]:
@@ -1912,14 +2276,19 @@ internal object FreeformResultCodes {
 // WindowConfiguration windowing modes (android.app; hidden constants, stable since API 28).
 internal const val WINDOWING_MODE_FULLSCREEN = 1
 internal const val WINDOWING_MODE_FREEFORM = 5
-// Who wants which type (392): split panes are STANDARD, cluster projection stays RECENTS.
+
+/** Settle budget of the light fullscreen pull-back: [PULLBACK_READS] reads, one per pause. */
+internal const val PULLBACK_POLL_MS = 300L
+internal const val PULLBACK_READS = 4
+// Who wants which type (392/#134): split panes are STANDARD, and so is cluster projection.
 // RECENTS suppresses the AOSP-12 freeform DecorCaption (hasWindowDecorCaption() is true only for
 // activityType == STANDARD && windowingMode == FREEFORM), which is why v3.9 created panes as
 // RECENTS — but recents-typed tasks nest as leaves under one shared root task, so their input
 // shields are not cropped to the pane bounds and only the top pane receives touch (on-car
 // 2026-07-29, ActivityRecordInputSink fullscreen; memory project_split_screen_wave.md). Panes
-// therefore take the caption and keep their own root task; the cluster has a single pane and is
-// unaffected, so it keeps RECENTS.
+// therefore take the caption and keep their own root task. The cluster kept RECENTS until #134:
+// a live navigator task is STANDARD, so the retype forced a remove+relaunch that killed the
+// navigator on Sea Lion 07 — the cluster is STANDARD now and wears the caption too.
 // IMPORTANT (on-car 390): `--activityType N` types a task only when the task is CREATED. Passing it
 // to `am start` for an ALREADY LIVE task changes the windowing mode and nothing else. Re-typing a
 // live task therefore means removing it and letting the relaunch create it (see
@@ -1974,10 +2343,12 @@ internal fun handleSetWindowingModeTx(
  * IActivityTaskManager.setTaskWindowingMode and DiLink 5 did not restore it (on-car
  * NoSuchMethodException, 2026-07-15), so after that specific throw the shell ActivityStarter
  * path takes over: `am start --windowingMode 5 --display N -n <cmp>` applies mode+display to an
- * EXISTING task, keeping its task id (validated on-car). Freeform sticks to a task on this ROM —
- * the only way back to fullscreen is removing the stack and relaunching on the main display
- * (the navigator restores its own guidance session; the task id changes). Any other [reflectSet]
- * throw is rethrown untouched so [launchFreeformCore]'s classification still sees it.
+ * EXISTING task, keeping its task id (validated on-car). The way back to fullscreen is the same
+ * command with mode 1 and display 0; the task is read back through [stateOf] and only an
+ * unconfirmed pullback (state unreadable, wrong display or still not fullscreen) falls back to the
+ * legacy remove+relaunch, which changes the task id and makes the navigator rebuild its guidance
+ * session (#134). Any other [reflectSet] throw is rethrown untouched so [launchFreeformCore]'s
+ * classification still sees it.
  *
  * Q2 / F-2+F-6: [getActivityType] is queried before attempting [reflectSet] in the freeform
  * direction. [reflectSet] changes the windowing mode but preserves the activityType — so a task
@@ -2043,6 +2414,38 @@ internal fun setWindowingModeCompat(
             taskId, freeformType, desiredActivityType, freeformDisplayId, component, shell, sleep, stateOf,
         )
     } else {
+        // Light path first (#134): the same `am start` trick the freeform direction uses —
+        // mode+display applied to the EXISTING task, so the navigator keeps its id, its process
+        // and its guidance session. Verified by reading the task back; only an unconfirmed
+        // pullback falls through to the destructive remove+relaunch below.
+        val light = runCatching {
+            shell("am start --windowingMode $WINDOWING_MODE_FULLSCREEN --display 0 -n \"\$1\"", listOf(component))
+        }.getOrNull()
+        if (light != null && !light.contains("Error") && !light.contains("Exception")) {
+            // Settle tolerance, same shape as the freeform probe: the reparent takes a moment and
+            // the state can read null (task momentarily invisible mid-move) or stale. Only an
+            // exhausted budget means the light path did not work. The am start is NOT repeated.
+            var after: TaskModeState? = null
+            repeat(PULLBACK_READS) {
+                sleep(PULLBACK_POLL_MS)
+                after = stateOf(taskId)
+                if (after != null && after.displayId == 0 &&
+                    after.windowingMode == WINDOWING_MODE_FULLSCREEN
+                ) {
+                    android.util.Log.i("bydmate_helper", "pullback light path ok task=$taskId")
+                    return
+                }
+            }
+            android.util.Log.i(
+                "bydmate_helper",
+                "pullback light path failed: task=$taskId state=$after → remove+relaunch",
+            )
+        } else {
+            android.util.Log.i(
+                "bydmate_helper",
+                "pullback light path failed: task=$taskId am=${light?.take(120)} → remove+relaunch",
+            )
+        }
         // A swallowed remove failure would let the relaunch deliver its intent to the
         // still-alive freeform task and report success with the task stranded on the
         // cluster (codex pre-release audit 2026-07-16). "Exception occurred while
@@ -2066,8 +2469,8 @@ internal fun setWindowingModeCompat(
  * landed anyway (relaunch race), and a [move] that throws "already there" is accepted when the
  * task sits on the target display. [getActivityType] guards that skip: a live task whose type
  * differs from [desiredActivityType] goes through [setMode] (and thus [ensureTypedFreeform]) to be
- * recreated with the right type, because the type is the caller's whole point — RECENTS for the
- * cluster, STANDARD for split panes. Unknown type (-1) skips the check, as does the default
+ * recreated with the right type, because the type is the caller's whole point — STANDARD for both
+ * split panes and the cluster (#134). Unknown type (-1) skips the check, as does the default
  * [getActivityType]. [setMode] gets ONE bounded retry after a settle pause — a transient vendor throw
  * (e.g. racing the task's own relaunch) must not dump the launch into the VD fallback.
  * Availability probe: AOSP does NOT throw when freeform is off — Task.setWindowingMode silently
@@ -2213,9 +2616,49 @@ internal fun launchFreeformCore(
         }
         final = runCatching { state(liveTaskId) }.getOrNull()
     }
-    val placed = when {
+    var placed = when {
         final != null -> final.displayId == displayId && final.windowingMode == WINDOWING_MODE_FREEFORM
         else -> movedByCall
+    }
+    // #194 (DiLink 4.0, same finding as byd-dashcast): the cluster display of that firmware has no
+    // FLAG_SUPPORTS_FREEFORM_WINDOW_MANAGEMENT, so the ROM silently drops freeform during the
+    // reparent and the task arrives fullscreen ON the target display. DashCast switches the mode
+    // AFTER the move for exactly this reason. Re-assert it once, re-pin, and let the re-read decide
+    // — only while the sleep still fits the client's budget, like the grace poll above. A firmware
+    // that keeps freeform across the move (the whole current fleet) never enters this branch.
+    if (final != null && final.displayId == displayId &&
+        final.windowingMode != WINDOWING_MODE_FREEFORM && now() + GRACE_POLL_MS <= deadlineMs
+    ) {
+        runCatching { setMode(liveTaskId, WINDOWING_MODE_FREEFORM) }
+        refreshTaskId()
+        runCatching { bounds(liveTaskId, left, top, right, bottom) }
+        runCatching { focus(liveTaskId) }
+        // Same poll as the mid-relaunch grace above, and for the same reason: the compat setMode
+        // goes through `am start`, which can RECREATE the task — a single read 200 ms later hits
+        // either nothing or the dying old task and reports a false FAILED (and a fullscreen
+        // restore) for a placement that is about to be correct. A task surfacing under a new id
+        // was never pinned, so it is pinned here before its state decides the verdict.
+        var reassertAttempt = 0
+        var reasserted: TaskModeState? = null
+        while ((reasserted == null || reasserted.windowingMode != WINDOWING_MODE_FREEFORM) &&
+            reassertAttempt < 6 && now() + GRACE_POLL_MS <= deadlineMs
+        ) {
+            reassertAttempt++
+            sleep(GRACE_POLL_MS)
+            refreshTaskId()
+            if (liveTaskId != pinnedTaskId) {
+                log("re-pinning task $liveTaskId found after the freeform re-assert (was $pinnedTaskId)", null)
+                movedByCall = false
+                pin(liveTaskId)
+                pinnedTaskId = liveTaskId
+            }
+            reasserted = runCatching { state(liveTaskId) }.getOrNull()
+        }
+        final = reasserted
+        placed = reasserted != null && reasserted.displayId == displayId &&
+            reasserted.windowingMode == WINDOWING_MODE_FREEFORM
+        log("freeform dropped by reparent to display $displayId; " +
+            "re-asserted after move -> mode=${reasserted?.windowingMode} (polls=$reassertAttempt)", null)
     }
     if (placed && !movedByCall) log("move(task=$liveTaskId) threw but task already on display $displayId; accepting", null)
     if (!placed) {

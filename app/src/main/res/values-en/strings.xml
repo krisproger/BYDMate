@@ -24,7 +24,9 @@
     <string name="settings_display_mirror_title">Projection to cluster via wheel button</string>
     <string name="settings_display_mirror_desc">A short press of the chosen steering-wheel button moves the selected app to the cluster and back.</string>
     <string name="settings_cluster_auto_container_title">Show on the cluster right away</string>
-    <string name="settings_cluster_auto_container_desc">Switch the cluster into projection mode automatically</string>
+    <string name="settings_cluster_auto_container_desc">The app switches the cluster into projection mode and back by itself (navigator and blind-spot cameras). Turn it off if ADAS or the stock widget disappears from the cluster afterwards and does not come back on its own: then switch the cluster mode manually, the picture shows in the mini-map</string>
+    <string name="settings_cluster_full_display_title">Full cluster screen</string>
+    <string name="settings_cluster_full_display_desc">By default the map fills the top of the cluster and the stock strip with speed and key readings stays at the bottom. Turn on if you want the map across the whole cluster without that strip. Works only on firmwares with the new interface, changes nothing elsewhere. Applies at the next projection</string>
     <string name="settings_cluster_direct_reboot_hint">For the voice agent to see the navigator on the cluster, reboot the DiLink head unit once: press and hold the volume knob. Simply turning the car off is not enough. Until the reboot projection still works, but the agent cannot see the route.</string>
     <string name="cluster_direct_unsupported_hint">Direct output is not available on this car\'s firmware, a compatible mode is used</string>
     <string name="settings_projection_mode_title">Projection mode</string>
@@ -71,6 +73,19 @@
     <!-- Volume knob on the steering wheel: play/pause instead of audio-source switch -->
     <string name="settings_knob_play_pause_title">Steering wheel volume knob</string>
     <string name="settings_knob_play_pause_desc">Pressing the knob pauses and resumes playback instead of switching the audio source. Needed after the firmware update that made the press change the source.</string>
+
+    <!-- ADB restore after reboot (firmwares 2606+) -->
+    <string name="settings_adb_restore_title">Restore ADB after a reboot</string>
+    <string name="settings_adb_restore_desc">For firmwares where ADB turns off at every reboot. Wi-Fi must be on.</string>
+    <string name="settings_adb_restore_help_title">How ADB restore works</string>
+    <string name="settings_adb_restore_help_body">On newer DiLink firmwares (since summer 2026) the ADB port closes at every reboot, and BYDMate loses access to the car control features.\n\nThe app can bring ADB back up through the wireless debugging built into Android. For that:\n\n1. Wi-Fi in the car must be on and connected to a network: your home one, a phone hotspot or any other. Without Wi-Fi, Android does not allow wireless debugging to be enabled, that is a system limitation.\n\n2. The first time on each new network the system dialog “Allow wireless debugging on this network?” appears on the screen. Tick “Always allow on this network” and press ALLOW. After that everything happens without questions on this network, so it is convenient to use the same one.\n\n3. Once, while ADB still works, the app grants itself the system permission it needs. If the status line shows “Activation needed”, connect ADB the usual way and restart the app.\n\nIf ADB on your firmware works after a reboot anyway, there is no need to turn this on: the status line will show “Not needed”.</string>
+    <string name="settings_adb_restore_status_not_needed">Not needed: ADB already works</string>
+    <string name="settings_adb_restore_status_needs_activation">Activation needed: connect ADB once and restart the app</string>
+    <string name="settings_adb_restore_status_waiting_wifi">Waiting for Wi-Fi</string>
+    <string name="settings_adb_restore_status_needs_dialog">Confirm the dialog on the screen: “Always allow on this network” and ALLOW</string>
+    <string name="settings_adb_restore_status_connecting">Restoring…</string>
+    <string name="settings_adb_restore_status_restored">Restored at %1$s</string>
+    <string name="settings_adb_restore_status_failed">Error: %1$s</string>
     <!-- Car system section: BYD head unit settings, not app settings -->
     <string name="settings_car_system_header">Car system</string>
     <string name="settings_car_language_title">Car interface language</string>
@@ -156,6 +171,10 @@
     <string name="settings_widget_hints">- Long tap the widget - hide until BYDMate is opened next time.\n- Drag to the bin at the bottom - turn off completely.\n- Regular tap - open BYDMate.</string>
     <string name="settings_widget_hide_youtube_label">Hide over YouTube</string>
     <string name="settings_widget_hide_youtube_description">The button panel hides while YouTube is on screen</string>
+    <string name="settings_widget_hide_apps_label">Hide in apps</string>
+    <string name="settings_widget_hide_apps_description">The button panel hides while a selected app is on screen</string>
+    <string name="settings_widget_hide_apps_none">Not selected</string>
+    <string name="settings_widget_hide_apps_count">Selected: %1$d</string>
     <string name="settings_widget_reset_position_button">Reset position</string>
     <string name="settings_reset_seat_channel">Reset seat channel</string>
     <string name="settings_reset_seat_channel_hint">If seat heating or ventilation stops working after switching cars</string>
@@ -374,6 +393,8 @@
     <string name="automation_delay_3s">3 s</string>
     <string name="automation_delay_5s">5 s</string>
     <string name="automation_delay_10s">10 s</string>
+    <string name="automation_delay_30s">30 s</string>
+    <string name="automation_delay_60s">1 min</string>
     <string name="automation_delay_display_name">Delay %1$s</string>
     <string name="automation_add_action_button">+ Add action</string>
     <string name="automation_action_dplus_command">Vehicle command</string>
@@ -561,12 +582,8 @@
     <string name="applauncher_empty">Nothing found</string>
     <string name="applauncher_close_button">Close</string>
     <string name="battery_health_charging_cd">Charging</string>
-    <string name="battery_health_dialog_title">Battery health</string>
-    <string name="battery_health_now_header">Now (from car, live)</string>
-    <string name="battery_health_lifetime_header">Lifetime (system data)</string>
     <string name="battery_health_cell_delta_label">Cell delta</string>
     <string name="battery_health_cell_delta_value">%1$.3f V</string>
-    <string name="battery_health_banks_header">Banks</string>
     <string name="battery_health_cell_voltage_value">%1$.3f V</string>
     <string name="battery_health_bat_temp_label">battery temp.</string>
     <string name="battery_health_12v_label">12V system</string>
@@ -575,9 +592,6 @@
     <string name="battery_health_bms_mileage_value">%1$.1f km</string>
     <string name="battery_health_pumped_label">pumped</string>
     <string name="battery_health_pumped_value">%1$.0f kWh</string>
-    <string name="battery_health_disabled_title">System data disabled</string>
-    <string name="battery_health_disabled_hint">Enable \"System data\" in Settings to see SoH, BMS mileage, and total pumped from the car.</string>
-    <string name="battery_health_avg_soc_header">Average SOC (BYDMate history)</string>
     <string name="battery_health_avg_since_charge_label">since last charge</string>
     <string name="battery_health_avg_all_time_label">all time</string>
     <string name="battery_health_avg_soc_hint" formatted="false">Time-weighted state of charge: the longer the battery sits charged, the higher the value. BYD LFP packs age slower when kept lower: storing at a high charge speeds up calendar aging. Guideline: below 65% is great, 65-85% is fine, above 85% consider charging later or less often. A 100% charge once every 1-2 weeks is still needed for cell balancing. Computed from BYDMate trip and charge history.</string>
@@ -608,7 +622,7 @@
     <string name="update_downloading_paused">Paused...</string>
     <string name="update_download_error">Download error (code %1$d)</string>
     <string name="update_download_notification_description">BYDMate update</string>
-    <string name="update_downloading_start">Downloading: 0%%</string>
+    <string name="update_downloading_start" formatted="false">Downloading: 0%</string>
     <string name="charges_day_today">today (%1$s)</string>
     <string name="charges_day_yesterday">yesterday</string>
 
@@ -1096,6 +1110,9 @@
     <string name="settings_conn_checking">Checking…</string>
     <string name="settings_zai_hint">Free glm-4.7-flash, recommended as the primary model</string>
     <string name="settings_custom_hint">Any OpenAI-compatible API. A preset fills in the URL and model, bring your own key.</string>
+    <string name="settings_custom_extra_json_label">Extra request parameters (JSON)</string>
+    <string name="settings_custom_extra_json_hint">Merged into every request to this server, for example {\"thinking\": false} to switch reasoning off</string>
+    <string name="settings_custom_extra_json_invalid">Invalid JSON</string>
     <string name="settings_custom_list_models">Model list</string>
     <string name="settings_error_dns">Server unreachable: the car\'s internet cannot resolve this address (DNS)</string>
     <string name="settings_error_timeout">Server did not respond in time</string>
@@ -1126,6 +1143,8 @@
     <string name="settings_widget_reset_position_desc">Return the widget to its default position</string>
     <string name="settings_export_csv_desc">Full trip history as one file in the Download folder</string>
     <string name="settings_log_recording_desc">Detailed activity log for troubleshooting. Enable when the developer asks for it</string>
+    <string name="settings_quiet_notification_title">Quiet tracking notification</string>
+    <string name="settings_quiet_notification_desc">The BYDMate notification moves to the collapsed silent list with no status bar icon. It cannot be removed entirely: Android requires a notification for background work</string>
     <string name="settings_config_export_desc">Backup: trip history with GPS and API keys in plain text, file in the Download folder</string>
     <string name="settings_config_restore_desc">Current data and settings will be fully replaced with the backup contents</string>
     <string name="settings_autostart_header">Autostart</string>
@@ -1136,12 +1155,15 @@
 
     <!-- Donation dialog + support card -->
     <string name="donate_auto_title">Thanks for using BYDMate</string>
-    <string name="donate_auto_body">The project is non-commercial and completely free, built purely out of enthusiasm. If BYDMate has been useful to you and you would like to say thanks, you can support development with a USDT transfer on any of the networks below.</string>
+    <string name="donate_auto_body">The project is non-commercial and completely free, built purely out of enthusiasm. If BYDMate has been useful to you and you would like to say thanks, you can support development with a USDT transfer on the EVM networks below or with a card via ЮMoney.</string>
     <string name="donate_settings_title">Support the project</string>
-    <string name="donate_settings_body">BYDMate is non-commercial and free. If you would like to support development, send USDT to the address below on any EVM network.</string>
+    <string name="donate_settings_body">BYDMate is non-commercial and free. If you would like to support development, send USDT to the address below or pay by card via ЮMoney.</string>
     <string name="donate_qr_hint">Point your phone\'s camera at the code</string>
     <string name="donate_address_label">USDT address · EVM networks</string>
     <string name="donate_copy_button">Copy address</string>
+    <string name="donate_card_label">Card · ЮMoney</string>
+    <string name="donate_card_body">Payment by card or a ЮMoney wallet. Open the link on your phone and enter any amount.</string>
+    <string name="donate_copy_link_button">Copy link</string>
     <string name="donate_copied_toast">Address copied</string>
     <string name="donate_networks">Networks: Arbitrum One, Optimism, Polygon, BNB Smart Chain, Avalanche, Ethereum</string>
     <string name="donate_warning">Do not send via TON, TRON (TRC-20), or Solana. Funds will be lost.</string>
@@ -1172,10 +1194,14 @@
     <string name="settings_blindspot_pip_width_title">Window width</string>
     <string name="settings_blindspot_pip_width_desc">Width of the main-screen window as % of the screen width</string>
     <string name="settings_blindspot_position_title">Window position</string>
-    <string name="settings_blindspot_position_desc">Shows an empty window on top of the screen: drag it with a finger to where the camera should be</string>
+    <string name="settings_blindspot_position_desc">Right camera. Shows an empty window on top of the screen: drag it with a finger to where the camera should be</string>
     <string name="settings_blindspot_position_button">Adjust position</string>
     <string name="settings_blindspot_position_done">Done</string>
     <string name="settings_blindspot_position_drag">Drag the window</string>
+    <string name="settings_blindspot_both_main_title">Both cameras on the main screen</string>
+    <string name="settings_blindspot_both_main_desc">The left camera is shown next to the right one on the tablet, the instrument cluster is not used</string>
+    <string name="settings_blindspot_left_position_title">Left camera position</string>
+    <string name="settings_blindspot_left_position_desc">By default the left window mirrors the right one. Drag it to set your own place</string>
     <string name="settings_blindspot_glow_title">Highlight when an object is in the blind spot</string>
     <string name="settings_blindspot_glow_desc">Orange border around the window while the sensor sees a car alongside</string>
     <string name="settings_blindspot_hint">Requires a trim with surround-view cameras. When the cluster projection is not available, the window works on the main screen.</string>
@@ -1236,4 +1262,60 @@
     <string name="settings_split_mechanism_platformized_hint">On this firmware the car itself splits the screen: the 1/3 and 2/3 panes, the divider and the swap gesture are native. BYDMate only starts the chosen pair and returns an app to its pane.</string>
     <string name="settings_split_try_native_hint">Try the Native split mode.</string>
     <string name="split_feature_disabled">Split screen is disabled in settings</string>
+    <!-- Tech panel: compact card cell + full screen -->
+    <string name="dashboard_battery_insulation_label">insulation</string>
+    <string name="tech_title">Tech</string>
+    <string name="tech_status_online">autoservice online</string>
+    <string name="tech_status_offline">autoservice offline</string>
+    <string name="tech_no_data">The car does not report this data</string>
+    <string name="tech_card_battery_now">Battery · now</string>
+    <string name="tech_card_limits">BMS limits</string>
+    <string name="tech_card_cells">Cells</string>
+    <string name="tech_card_motors">Motors and inverters</string>
+    <string name="tech_card_climate">Climate</string>
+    <string name="tech_card_tyres">Tyres · pressure / temperature</string>
+    <string name="tech_card_history">Battery · history</string>
+    <string name="tech_label_hv_voltage">HV voltage</string>
+    <string name="tech_label_power">power</string>
+    <string name="tech_label_battery_power">battery power</string>
+    <string name="tech_label_max_charge">max charge power</string>
+    <string name="tech_label_max_discharge">available battery power</string>
+    <string name="tech_label_motor_temp">motor temperature</string>
+    <string name="tech_label_inverter_temp">inverter temperature</string>
+    <string name="tech_label_rpm">rpm</string>
+    <string name="tech_label_pedals">accelerator / brake pedal</string>
+    <string name="tech_label_front">front</string>
+    <string name="tech_label_rear">rear</string>
+    <string name="tech_label_compressor">compressor</string>
+    <string name="tech_label_climate">climate</string>
+    <string name="tech_label_inside_outside">cabin / outside</string>
+    <string name="tech_on">on</string>
+    <string name="tech_off">off</string>
+    <string name="tech_tyre_fl">FL</string>
+    <string name="tech_tyre_fr">FR</string>
+    <string name="tech_tyre_rl">RL</string>
+    <string name="tech_tyre_rr">RR</string>
+    <string name="tech_value_mohm">%1$.1f MΩ</string>
+    <string name="tech_value_mv">%1$d mV</string>
+    <string name="tech_value_volt">%1$d V</string>
+    <string name="tech_value_kw">%1$d kW</string>
+    <string name="tech_value_watt">%1$d W</string>
+    <string name="tech_value_percent_per_hour">%1$.2f %%/h</string>
+    <string name="tech_value_deg">%1$d°</string>
+    <string name="tech_value_temp">%1$d°C</string>
+    <string name="tech_value_percent">%1$d%%</string>
+    <string name="tech_value_tyre">%1$.2f bar · %2$d°</string>
+    <string name="tech_value_tyre_pressure">%1$.2f bar</string>
+    <string name="tech_value_cell_scale">%1$.2f V</string>
+    <string name="tech_hint_soh" formatted="false">Battery health: how much of the original capacity is left. 100% on a new car, slowly decreasing over the years. The car itself calculates this value.</string>
+    <string name="tech_hint_hv_voltage">Voltage of the traction battery. It rises while charging and falls as the pack discharges, roughly 450…560 V on this car. On its own it says little, it is useful together with power.</string>
+    <string name="tech_hint_motor_power">Power at the electric motors right now: how much the car sends to the wheels or takes back from them while regenerating. Zero when parked. The car itself calculates this value.</string>
+    <string name="tech_hint_power">How much energy the battery is giving out right now. Plus: the car is spending it (acceleration, climate). Minus: the battery is taking energy in, either regeneration while braking or charging from a charger. Second number: how fast the charge is draining, percent per hour. When parked this is the onboard electronics draw.</string>
+    <string name="tech_hint_12v">Voltage of the ordinary 12-volt battery that powers the electronics. With the car running it is 13…14.5 V. If it is below 12 V while parked, the battery is getting weak.</string>
+    <string name="tech_hint_insulation">Resistance between the high-voltage battery and the body. The higher the better: a few megaohms is normal. Falling towards 0.5 MΩ and below means insulation is damaged somewhere, time for a service.</string>
+    <string name="tech_hint_bms_limits">The ceiling the battery controller allows right now: how much to take in while charging (a charger may give less) and how much to give out for acceleration. On a cold or nearly full battery both values are lower: that is why charging is slower and regeneration weaker in winter.</string>
+    <string name="tech_hint_cells">The battery is made of hundreds of cells. Shown are the weakest one, the strongest one and the difference between them. A difference up to 20…30 mV is normal. A permanently large difference means one cell is ageing faster than the others.</string>
+    <string name="tech_hint_motors">Temperature of the electric motors and of the inverters that drive them. In ordinary driving up to 60…80°. During long acceleration or towing they get hotter and the car reduces power itself until they cool down.</string>
+    <string name="tech_hint_compressor">How many watts the air conditioning and heat pump compressor draws. It is the main consumer besides the motors: in summer heat and in winter frost it noticeably eats into the range.</string>
+    <string name="tech_hint_tyres">Pressure and temperature of each wheel from the sensors in the tyres. Pressure rises by 0.2…0.3 bar as the tyres warm up on a trip, that is normal. If one wheel is noticeably lower than the others, check whether it is losing air.</string>
 </resources>

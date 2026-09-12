@@ -548,6 +548,27 @@ object AppModule {
 
     @Provides
     @Singleton
+    fun provideAdbRestorePreferences(
+        @ApplicationContext ctx: Context,
+    ): com.bydmate.app.data.autoservice.AdbRestorePreferences =
+        com.bydmate.app.data.autoservice.AdbRestorePreferencesImpl(ctx)
+
+    /** Long-lived scope for ADB-restore retries — they must outlive the screen that started them. */
+    @Provides
+    @Singleton
+    @com.bydmate.app.data.autoservice.AdbRestoreScope
+    fun provideAdbRestoreScope(): kotlinx.coroutines.CoroutineScope =
+        kotlinx.coroutines.CoroutineScope(
+            kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO)
+
+    @Provides
+    @Singleton
+    fun provideAdbRestoreSystem(
+        impl: com.bydmate.app.data.autoservice.AndroidAdbRestoreSystem,
+    ): com.bydmate.app.data.autoservice.AdbRestoreSystem = impl
+
+    @Provides
+    @Singleton
     fun provideSplitPreferences(
         @ApplicationContext ctx: Context,
     ): com.bydmate.app.split.SplitPreferences =

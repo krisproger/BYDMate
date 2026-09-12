@@ -162,6 +162,21 @@ class ClusterProjectionStateTest {
         assertEquals(false, shouldPowerDownCompositor(markerSet = false))
     }
 
+    // --- cameraNeedsCompositor (VV 2026-08-28: auto-container off = camera never sends 16/18/0) ---
+
+    @Test fun `camera drives the compositor only with auto-container on and a real cluster window`() {
+        assertEquals(true, cameraNeedsCompositor(autoContainer = true, clusterWindowAttached = true, clusterOnMainScreen = false))
+    }
+
+    @Test fun `auto-container off - camera leaves the compositor alone`() {
+        assertEquals(false, cameraNeedsCompositor(autoContainer = false, clusterWindowAttached = true, clusterOnMainScreen = false))
+    }
+
+    @Test fun `no cluster window or a mirrored main-screen window never needs the compositor`() {
+        assertEquals(false, cameraNeedsCompositor(autoContainer = true, clusterWindowAttached = false, clusterOnMainScreen = false))
+        assertEquals(false, cameraNeedsCompositor(autoContainer = true, clusterWindowAttached = true, clusterOnMainScreen = true))
+    }
+
     // --- shouldRecoverDirectTask (freeform task stranded on cluster display after crash) ---
 
     @Test fun `no marker means nothing to recover for direct task`() {
@@ -260,5 +275,54 @@ class ClusterProjectionStateTest {
     @Test fun `toggling split off while direct is enabled still yields flag 1`() {
         // Direct keeps the flag live regardless of split state.
         assertEquals(1, freeformFlagValue(directEnabled = true, splitEnabled = false))
+    }
+
+    @Test fun `default display pick prefers the mini band`() {
+        assertEquals(
+            "shared_fission_bg_XDJAScreenProjection_1",
+            pickProjectionDisplayName(
+                listOf(
+                    "shared_fission_bg_XDJAScreenProjection_0",
+                    "shared_fission_bg_XDJAScreenProjection_1",
+                ),
+                preferFull = false,
+            ),
+        )
+    }
+
+    @Test fun `prefer full picks the full-cluster surface`() {
+        assertEquals(
+            "shared_fission_bg_XDJAScreenProjection_0",
+            pickProjectionDisplayName(
+                listOf(
+                    "shared_fission_bg_XDJAScreenProjection_1",
+                    "shared_fission_bg_XDJAScreenProjection_0",
+                ),
+                preferFull = true,
+            ),
+        )
+    }
+
+    @Test fun `prefer full falls back when only the mini band exists`() {
+        assertEquals(
+            "shared_fission_bg_XDJAScreenProjection_1",
+            pickProjectionDisplayName(
+                listOf("shared_fission_bg_XDJAScreenProjection_1"), preferFull = true),
+        )
+    }
+
+    @Test fun `prefer full skips the bare surface in favour of the mini band`() {
+        assertEquals(
+            "shared_fission_bg_XDJAScreenProjection_1",
+            pickProjectionDisplayName(
+                listOf("fission_bg_XDJAScreenProjection", "shared_fission_bg_XDJAScreenProjection_1"),
+                preferFull = true,
+            ),
+        )
+    }
+
+    @Test fun `no projection surface yields no pick`() {
+        assertNull(pickProjectionDisplayName(emptyList(), preferFull = false))
+        assertNull(pickProjectionDisplayName(emptyList(), preferFull = true))
     }
 }

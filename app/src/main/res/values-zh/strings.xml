@@ -28,7 +28,9 @@
     <string name="settings_display_mirror_title">方向盘按键投射到仪表盘</string>
     <string name="settings_display_mirror_desc">短按所选方向盘按键，将所选应用投射到仪表盘或返回屏幕。</string>
     <string name="settings_cluster_auto_container_title">立即显示到仪表盘</string>
-    <string name="settings_cluster_auto_container_desc">自动将仪表盘切换到投屏模式</string>
+    <string name="settings_cluster_auto_container_desc">应用会自动将仪表盘切换到投屏模式并切回（导航和盲区摄像头）。如果之后仪表盘上的 ADAS 或原厂小部件消失且不会自行恢复，请关闭此项：此时请手动切换仪表盘模式，画面会显示在小地图中</string>
+    <string name="settings_cluster_full_display_title">仪表盘全屏</string>
+    <string name="settings_cluster_full_display_desc">默认地图占仪表盘上半部分，下方保留原厂的车速和主要信息条。若希望地图占满整个仪表盘、不显示该信息条，请开启。仅在新界面固件上有效，其他固件不受影响。下次投屏时生效</string>
     <string name="settings_cluster_direct_reboot_hint">要让语音助手看到仪表盘上的导航，请将DiLink车机重启一次：长按音量旋钮即可重启。仅熄火并不能重启车机。重启之前投屏仍然可用，但语音助手看不到路线。</string>
     <string name="cluster_direct_unsupported_hint">此车机固件不支持直连输出，已使用兼容模式</string>
     <string name="settings_projection_mode_title">投影模式</string>
@@ -138,6 +140,10 @@
     <string name="settings_widget_hints">• 长按小组件 - 隐藏至下次打开 BYDMate。\n• 拖到底部垃圾桶 - 完全关闭。\n• 普通点击 - 打开 BYDMate。</string>
     <string name="settings_widget_hide_youtube_label">YouTube 时隐藏</string>
     <string name="settings_widget_hide_youtube_description">YouTube 在屏幕上时按钮面板自动隐藏</string>
+    <string name="settings_widget_hide_apps_label">在应用中隐藏</string>
+    <string name="settings_widget_hide_apps_description">所选应用在屏幕上时按钮面板自动隐藏</string>
+    <string name="settings_widget_hide_apps_none">未选择</string>
+    <string name="settings_widget_hide_apps_count">已选择：%1$d</string>
     <string name="settings_widget_reset_position_button">重置位置</string>
     <string name="settings_reset_seat_channel">重置座椅通道</string>
     <string name="settings_reset_seat_channel_hint">更换车辆后座椅加热或通风失效时使用</string>
@@ -396,6 +402,8 @@
     <string name="automation_delay_3s">3 秒</string>
     <string name="automation_delay_5s">5 秒</string>
     <string name="automation_delay_10s">10 秒</string>
+    <string name="automation_delay_30s">30 秒</string>
+    <string name="automation_delay_60s">1 分钟</string>
     <string name="automation_delay_display_name">延迟 %1$s</string>
 
     <!-- Add action button -->
@@ -618,13 +626,9 @@
     <!-- SOC ring: charging icon content description -->
     <string name="battery_health_charging_cd">充电中</string>
 
-    <!-- Battery health dialog -->
-    <string name="battery_health_dialog_title">电池健康</string>
-    <string name="battery_health_now_header">当前（车辆实时数据）</string>
-    <string name="battery_health_lifetime_header">全生命周期（系统数据）</string>
+    <!-- Battery readings shared by the compact card and the tech panel -->
     <string name="battery_health_cell_delta_label">电芯压差</string>
     <string name="battery_health_cell_delta_value">%1$.3f V</string>
-    <string name="battery_health_banks_header">电池组</string>
     <string name="battery_health_cell_voltage_value">%1$.3f V</string>
     <string name="battery_health_bat_temp_label">电池温度</string>
     <string name="battery_health_12v_label">车载电源</string>
@@ -633,9 +637,6 @@
     <string name="battery_health_bms_mileage_value">%1$.1f 公里</string>
     <string name="battery_health_pumped_label">累计充入</string>
     <string name="battery_health_pumped_value">%1$.0f kWh</string>
-    <string name="battery_health_disabled_title">系统数据已禁用</string>
-    <string name="battery_health_disabled_hint">在设置中启用"系统数据"，以查看 SoH、BMS 里程和车辆累计充入量。</string>
-    <string name="battery_health_avg_soc_header">平均SOC（BYDMate历史）</string>
     <string name="battery_health_avg_since_charge_label">自上次充电</string>
     <string name="battery_health_avg_all_time_label">全部时间</string>
     <string name="battery_health_avg_soc_hint" formatted="false">按时间加权的平均电量：电池保持高电量的时间越长，该值越高。比亚迪LFP电池长期高电量存放会加速日历老化，建议保持较低水平。参考：65%以下很好，65-85%正常，高于85%建议推迟或减少充电。每1-2周仍需充满一次以平衡电芯。根据BYDMate行程和充电历史计算。</string>
@@ -676,7 +677,7 @@
     <string name="update_downloading_paused">已暂停...</string>
     <string name="update_download_error">下载错误（代码 %1$d）</string>
     <string name="update_download_notification_description">BYDMate 更新</string>
-    <string name="update_downloading_start">下载中：0%%</string>
+    <string name="update_downloading_start" formatted="false">下载中：0%</string>
 
     <!-- Charges: day group labels -->
     <string name="charges_day_today">今天（%1$s）</string>
@@ -782,6 +783,19 @@
     <!-- Volume knob on the steering wheel: play/pause instead of audio-source switch -->
     <string name="settings_knob_play_pause_title">方向盘音量旋钮</string>
     <string name="settings_knob_play_pause_desc">按下旋钮暂停和继续播放，而不是切换音源。固件更新后按下变为切换音源时需要开启。</string>
+
+    <!-- ADB restore after reboot (firmwares 2606+) -->
+    <string name="settings_adb_restore_title">重启后恢复 ADB</string>
+    <string name="settings_adb_restore_desc">适用于每次重启后 ADB 都会关闭的固件。需要打开 Wi-Fi。</string>
+    <string name="settings_adb_restore_help_title">ADB 恢复功能的工作原理</string>
+    <string name="settings_adb_restore_help_body">在较新的 DiLink 固件上（2026 年夏季之后），ADB 端口在每次重启后都会关闭，BYDMate 会失去对车辆控制功能的访问。\n\n应用可以通过 Android 内置的无线调试重新打开 ADB。为此：\n\n1. 车机的 Wi-Fi 必须打开并连接到网络：家里的网络、手机热点或其他任意网络。没有 Wi-Fi 时 Android 不允许开启无线调试，这是系统限制。\n\n2. 在每个新网络上首次开启时，屏幕上会出现系统对话框“Allow wireless debugging on this network?”。请勾选“Always allow on this network”并点击 ALLOW。之后在该网络上不会再询问，因此建议一直使用同一个网络。\n\n3. 在 ADB 仍然可用时，应用会一次性给自己授予所需的系统权限。如果状态行显示“需要激活”，请按常规方式连接一次 ADB，然后重启应用。\n\n如果您的固件在重启后 ADB 本来就能工作，则无需开启：状态行会显示“无需开启”。</string>
+    <string name="settings_adb_restore_status_not_needed">无需开启：ADB 已在工作</string>
+    <string name="settings_adb_restore_status_needs_activation">需要激活：请先正常连接一次 ADB，然后重启应用</string>
+    <string name="settings_adb_restore_status_waiting_wifi">等待 Wi-Fi</string>
+    <string name="settings_adb_restore_status_needs_dialog">请在屏幕上确认对话框：勾选“Always allow on this network”并点击 ALLOW</string>
+    <string name="settings_adb_restore_status_connecting">正在恢复…</string>
+    <string name="settings_adb_restore_status_restored">已于 %1$s 恢复</string>
+    <string name="settings_adb_restore_status_failed">错误：%1$s</string>
     <!-- Car system section: BYD head unit settings, not app settings -->
     <string name="settings_car_system_header">车机系统</string>
     <string name="settings_car_language_title">车机界面语言</string>
@@ -1211,6 +1225,9 @@
     <string name="settings_conn_checking">检查中…</string>
     <string name="settings_zai_hint">免费 glm-4.7-flash，推荐设为主模型</string>
     <string name="settings_custom_hint">任何兼容 OpenAI 的 API。预设会填入地址和模型，密钥需自备。</string>
+    <string name="settings_custom_extra_json_label">附加请求参数 (JSON)</string>
+    <string name="settings_custom_extra_json_hint">会加入发送到该服务器的每个请求，例如 {\"thinking\": false} 可关闭推理</string>
+    <string name="settings_custom_extra_json_invalid">JSON 格式无效</string>
     <string name="settings_custom_list_models">模型列表</string>
     <string name="settings_error_dns">服务器不可达：车机网络无法解析该地址 (DNS)</string>
     <string name="settings_error_timeout">服务器未在规定时间内响应</string>
@@ -1241,6 +1258,8 @@
     <string name="settings_widget_reset_position_desc">将小部件恢复到默认位置</string>
     <string name="settings_export_csv_desc">全部行程历史导出为一个文件，保存到 Download 文件夹</string>
     <string name="settings_log_recording_desc">用于排查问题的详细日志，请在开发者要求时开启</string>
+    <string name="settings_quiet_notification_title">安静的通知</string>
+    <string name="settings_quiet_notification_desc">BYDMate 通知移至折叠的静默列表，状态栏不显示图标。无法完全移除：Android 要求后台运行必须有通知</string>
     <string name="settings_config_export_desc">备份：包含 GPS 的行程历史和明文 API 密钥，文件保存在 Download 文件夹</string>
     <string name="settings_config_restore_desc">当前数据和设置将被备份内容完全替换</string>
     <string name="settings_autostart_header">自启动</string>
@@ -1251,12 +1270,15 @@
 
     <!-- Donation dialog + support card -->
     <string name="donate_auto_title">感谢您使用 BYDMate</string>
-    <string name="donate_auto_body">该项目非商业化且完全免费，完全出于个人热情开发维护。如果 BYDMate 对您有帮助，想表示感谢，可以通过以下任意网络转账 USDT 支持开发。</string>
+    <string name="donate_auto_body">该项目非商业化且完全免费，完全出于个人热情开发维护。如果 BYDMate 对您有帮助，想表示感谢，可以通过 EVM 网络转账 USDT，或通过 ЮMoney 用银行卡支持开发。</string>
     <string name="donate_settings_title">支持项目</string>
-    <string name="donate_settings_body">BYDMate 非商业化且免费。如果想支持开发，请通过以下任意 EVM 网络将 USDT 转到下方地址。</string>
+    <string name="donate_settings_body">BYDMate 非商业化且免费。如果想支持开发，请将 USDT 转到下方地址，或通过 ЮMoney 用银行卡支付。</string>
     <string name="donate_qr_hint">用手机摄像头扫描二维码</string>
     <string name="donate_address_label">USDT 地址 · EVM 网络</string>
     <string name="donate_copy_button">复制地址</string>
+    <string name="donate_card_label">银行卡 · ЮMoney</string>
+    <string name="donate_card_body">支持银行卡或 ЮMoney 钱包付款。请在手机上打开链接并输入任意金额。</string>
+    <string name="donate_copy_link_button">复制链接</string>
     <string name="donate_copied_toast">地址已复制</string>
     <string name="donate_networks">网络：Arbitrum One, Optimism, Polygon, BNB Smart Chain, Avalanche, Ethereum</string>
     <string name="donate_warning">请勿通过 TON、TRON (TRC-20) 或 Solana 转账，资金将无法找回。</string>
@@ -1287,10 +1309,14 @@
     <string name="settings_blindspot_pip_width_title">小窗宽度</string>
     <string name="settings_blindspot_pip_width_desc">主屏幕小窗的宽度，占屏幕宽度的百分比</string>
     <string name="settings_blindspot_position_title">小窗位置</string>
-    <string name="settings_blindspot_position_desc">在屏幕上显示一个空白小窗：用手指把它拖到摄像头应该出现的位置</string>
+    <string name="settings_blindspot_position_desc">右侧摄像头。在屏幕上显示一个空白小窗：用手指把它拖到摄像头应该出现的位置</string>
     <string name="settings_blindspot_position_button">调整位置</string>
     <string name="settings_blindspot_position_done">完成</string>
     <string name="settings_blindspot_position_drag">拖动小窗</string>
+    <string name="settings_blindspot_both_main_title">两侧摄像头都显示在主屏</string>
+    <string name="settings_blindspot_both_main_desc">左侧摄像头与右侧一起显示在中控屏上，不使用仪表盘</string>
+    <string name="settings_blindspot_left_position_title">左侧摄像头位置</string>
+    <string name="settings_blindspot_left_position_desc">默认情况下左侧小窗与右侧镜像对称。拖动即可自定义位置</string>
     <string name="settings_blindspot_glow_title">盲区有车时高亮</string>
     <string name="settings_blindspot_glow_desc">传感器检测到旁边有车时，窗口周围显示橙色边框</string>
     <string name="settings_blindspot_hint">需要配备全景影像的车型。如果无法投射到仪表盘，小窗会在主屏幕上工作。</string>
@@ -1350,4 +1376,60 @@
     <string name="settings_split_mechanism_platformized_hint">在该固件上由车机自己分屏：1/3 和 2/3 两个窗口、分隔条和左右交换手势都是原生的。BYDMate 只负责启动所选的应用组合，并把跑出去的应用送回它的窗口。</string>
     <string name="settings_split_try_native_hint">试试“系统分屏”方式。</string>
     <string name="split_feature_disabled">分屏功能已在设置中关闭</string>
+    <!-- Tech panel: compact card cell + full screen -->
+    <string name="dashboard_battery_insulation_label">绝缘</string>
+    <string name="tech_title">技术</string>
+    <string name="tech_status_online">autoservice 在线</string>
+    <string name="tech_status_offline">autoservice 离线</string>
+    <string name="tech_no_data">车辆未提供这些数据</string>
+    <string name="tech_card_battery_now">电池 · 当前</string>
+    <string name="tech_card_limits">BMS 限值</string>
+    <string name="tech_card_cells">电芯</string>
+    <string name="tech_card_motors">电机与逆变器</string>
+    <string name="tech_card_climate">空调</string>
+    <string name="tech_card_tyres">轮胎 · 胎压 / 温度</string>
+    <string name="tech_card_history">电池 · 历史</string>
+    <string name="tech_label_hv_voltage">高压电压</string>
+    <string name="tech_label_power">功率</string>
+    <string name="tech_label_battery_power">电池功率</string>
+    <string name="tech_label_max_charge">最大充电功率</string>
+    <string name="tech_label_max_discharge">电池可用功率</string>
+    <string name="tech_label_motor_temp">电机温度</string>
+    <string name="tech_label_inverter_temp">逆变器温度</string>
+    <string name="tech_label_rpm">转速 rpm</string>
+    <string name="tech_label_pedals">油门 / 刹车踏板</string>
+    <string name="tech_label_front">前</string>
+    <string name="tech_label_rear">后</string>
+    <string name="tech_label_compressor">压缩机</string>
+    <string name="tech_label_climate">空调</string>
+    <string name="tech_label_inside_outside">车内 / 车外</string>
+    <string name="tech_on">开</string>
+    <string name="tech_off">关</string>
+    <string name="tech_tyre_fl">左前</string>
+    <string name="tech_tyre_fr">右前</string>
+    <string name="tech_tyre_rl">左后</string>
+    <string name="tech_tyre_rr">右后</string>
+    <string name="tech_value_mohm">%1$.1f MΩ</string>
+    <string name="tech_value_mv">%1$d mV</string>
+    <string name="tech_value_volt">%1$d V</string>
+    <string name="tech_value_kw">%1$d kW</string>
+    <string name="tech_value_watt">%1$d W</string>
+    <string name="tech_value_percent_per_hour">%1$.2f %%/小时</string>
+    <string name="tech_value_deg">%1$d°</string>
+    <string name="tech_value_temp">%1$d°C</string>
+    <string name="tech_value_percent">%1$d%%</string>
+    <string name="tech_value_tyre">%1$.2f bar · %2$d°</string>
+    <string name="tech_value_tyre_pressure">%1$.2f bar</string>
+    <string name="tech_value_cell_scale">%1$.2f V</string>
+    <string name="tech_hint_soh" formatted="false">电池健康度：相比新电池还剩多少容量。新车为 100%，随着年份缓慢下降。该数值由车辆自己计算。</string>
+    <string name="tech_hint_hv_voltage">动力电池的电压。充电时升高，放电时降低，这台车大约在 450…560 V。单看意义不大，结合功率一起看才有用。</string>
+    <string name="tech_hint_motor_power">此刻电机的功率：车辆向车轮输出多少动力，或在能量回收时从车轮回收多少。停车时为 0。该数值由车辆自己计算。</string>
+    <string name="tech_hint_power">电池此刻输出多少能量。正值：车辆在消耗（加速、空调）。负值：电池在吸收能量，可能是制动能量回收，也可能是在充电桩充电。第二个数值：电量下降的速度，每小时百分比。停车时代表车载电子设备的耗电。</string>
+    <string name="tech_hint_12v">为电子设备供电的普通 12 伏蓄电池电压。车辆启动时为 13…14,5 V。停车时低于 12 V，说明蓄电池在变弱。</string>
+    <string name="tech_hint_insulation">高压电池与车身之间的绝缘电阻。数值越大越好：正常为几兆欧。若降到 0,5 MΩ 及以下，说明某处绝缘受损，该去维修了。</string>
+    <string name="tech_hint_bms_limits">电池控制器此刻允许的上限：充电时能吸收多少（充电桩可能给得更少），以及加速时能输出多少。电池偏冷或接近充满时两个数值都更低：所以冬天充电更慢、能量回收更弱。</string>
+    <string name="tech_hint_cells">电池由数百个电芯组成。这里显示最弱的、最强的以及两者之差。差值在 20…30 mV 以内属正常。长期差值偏大，说明某个电芯老化得比其他更快。</string>
+    <string name="tech_hint_motors">电机及其驱动逆变器的温度。日常行驶在 60…80° 以内。长时间加速或拖挂时温度更高，车辆会自行降低功率直到冷却。</string>
+    <string name="tech_hint_compressor">空调与热泵压缩机消耗多少瓦。它是除电机之外的主要用电设备：夏天酷热、冬天严寒时会明显缩短续航。</string>
+    <string name="tech_hint_tyres">来自胎压传感器的每个车轮的压力和温度。行驶中轮胎升温后压力会升高 0,2…0,3 bar，属于正常。若某个车轮明显低于其他，请检查是否漏气。</string>
 </resources>

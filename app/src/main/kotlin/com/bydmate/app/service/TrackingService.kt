@@ -16,6 +16,10 @@ import android.content.pm.PackageManager
 import android.location.Location
 import android.location.LocationListener
 import android.location.LocationManager
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
+import android.net.NetworkRequest
 import android.os.IBinder
 import android.os.Looper
 import android.os.PowerManager
@@ -45,6 +49,7 @@ import com.bydmate.app.domain.calculator.OdometerConsumptionBuffer
 import com.bydmate.app.domain.calculator.RangeAvgSource
 import com.bydmate.app.domain.calculator.SocInterpolator
 import com.bydmate.app.domain.calculator.RangeCalculator
+import com.bydmate.app.domain.calculator.RangeEstimate
 import androidx.work.ExistingWorkPolicy
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
@@ -87,6 +92,7 @@ class TrackingService : Service(), LocationListener {
     @Inject lateinit var autoserviceClient: com.bydmate.app.data.autoservice.AutoserviceClient
     @Inject lateinit var cameraStateMonitor: com.bydmate.app.data.camera.CameraStateMonitor
     @Inject lateinit var adbOnDeviceClient: com.bydmate.app.data.autoservice.AdbOnDeviceClient
+    @Inject lateinit var adbRestoreManager: com.bydmate.app.data.autoservice.AdbRestoreManager
     @Inject lateinit var iternioTelemetryClient: IternioTelemetryClient
     @Inject lateinit var webhookTelemetryClient: WebhookTelemetryClient
     @Inject lateinit var lastSessionRepository: com.bydmate.app.data.repository.LastSessionRepository
@@ -106,9 +112,13 @@ class TrackingService : Service(), LocationListener {
     @Inject lateinit var hudController: com.bydmate.app.hud.HudController
     @Inject lateinit var fidSubscriptionManager: com.bydmate.app.data.subscription.FidSubscriptionManager
     @Inject lateinit var blindSpotController: com.bydmate.app.camera.BlindSpotController
+    @Inject lateinit var logRecorder: com.bydmate.app.diagnostics.LogRecorder
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var pollingJob: Job? = null
+    // Trigger 2 for the ADB restore: Android refuses to enable wireless debugging without a
+    // Wi-Fi connection, so a Wi-Fi network appearing is the moment a blocked attempt can run.
+    private var wifiRestoreCallback: ConnectivityManager.NetworkCallback? = null
     private var wakeLock: PowerManager.WakeLock? = null
     private var wakeLockRenewer: WakeLockRenewer? = null
     private var locationManager: LocationManager? = null
@@ -134,6 +144,9 @@ class TrackingService : Service(), LocationListener {
     @Volatile private var cachedLastTripAvg: Double? = null
 
     private var lastSummaryLogTs: Long = 0L
+    // Last range value logged (km, rounded) — avoids flooding logcat since
+    // estimate() runs on every ~3s poll tick.
+    private var lastLoggedRangeKm: Int? = null
     @Volatile private var lastGuidanceGrantRearmTs: Long = 0L
     // Live charging-end detector. We track gun-connect state across polls and
     // fire runCatchUp on the connected→disconnected edge. The gun signal is
@@ -210,6 +223,11 @@ class TrackingService : Service(), LocationListener {
             name = "star a11y",
             isGranted = ::starServiceRunning,
             reassert = { helperBootstrap.ensureRunning() && helperClient.enableAccessibilityService() },
+            // Android 10 (DiLink 3.0/4.0): a re-assert never clears AOSP Q's stuck mBindingServices
+            // (field logs: 0/12 successes), and a healthy bind lands by try 2; hand over to the
+            // daemon force-stop recovery after ~10 s instead of ~35 s.
+            attempts = if (android.os.Build.VERSION.SDK_INT <= 29) A11Y_ATTEMPTS_ANDROID10
+            else GrantSelfHeal.ATTEMPTS,
         )
     }
 
@@ -238,7 +256,14 @@ class TrackingService : Service(), LocationListener {
     companion object {
         private const val TAG = "TrackingService"
         private const val NOTIFICATION_ID = 1
+        private const val A11Y_ATTEMPTS_ANDROID10 = 2
         private const val CHANNEL_ID = "bydmate_tracking"
+        // Opt-in "quiet" channel (IMPORTANCE_MIN): the mandatory foreground notification collapses
+        // into the shade's silent list with no status-bar icon. Off by default - existing users keep
+        // the LOW channel untouched (#86). Pref lives in the cluster_projection file next to the other
+        // car/system toggles the settings screen edits.
+        private const val QUIET_CHANNEL_ID = "bydmate_tracking_quiet"
+        const val KEY_QUIET_NOTIFICATION = "quiet_notification"
         // Throttle autoservice gun-state read so we don't hit Binder/ADB on every
         // poll tick. 5 ticks ≈ 15 s — fast enough that the user sees a row
         // appear within ~half a minute of unplugging, gentle enough not to
@@ -256,6 +281,10 @@ class TrackingService : Service(), LocationListener {
         // self-heal run per 10 min at most, so a permanently-failing grant can't
         // hammer the daemon for a whole trip.
         private const val GUIDANCE_GRANT_REARM_MS = 600_000L
+        // Resuming a log recording interrupted by ignition-off: a couple of retries
+        // cover the storage mount lagging the service start, then we stop trying.
+        private const val LOG_RESUME_ATTEMPTS = 3
+        private const val LOG_RESUME_RETRY_DELAY_MS = 20_000L
         // Startup catch-up retries while the autoservice SOC fid is still
         // sentinel/unavailable during the cold-start window. 4 extra tries × 3 s
         // ≈ 12 s of grace before giving up — enough for the fid cache to warm so
@@ -385,6 +414,10 @@ class TrackingService : Service(), LocationListener {
         private val _youtubeForeground = MutableStateFlow(false)
         val youtubeForeground: StateFlow<Boolean> = _youtubeForeground
 
+        /** Raw foreground package — widget hides itself in the user-picked apps. */
+        private val _foregroundPackage = MutableStateFlow<String?>(null)
+        val foregroundPackage: StateFlow<String?> = _foregroundPackage
+
         // Live reference to the running service so the floating widget can reach
         // the singleton AutomationEngine without binding. Mirrors how widget data
         // flows out through this companion. Set in onCreate, cleared in onDestroy.
@@ -462,6 +495,7 @@ class TrackingService : Service(), LocationListener {
         ChainLog.append(this, "startForeground OK")
         acquireWakeLock()
         startLocationUpdates()
+        registerWifiRestoreCallback()
         // HUD output resumes with the service on cars where the user enabled it.
         hudController.startIfEnabled()
 
@@ -640,6 +674,20 @@ class TrackingService : Service(), LocationListener {
         // (service start, not first recorder use) minimizes the window where the log recorder
         // still cannot see the helper daemon's lines.
         serviceScope.launch { readLogsGrant.ensure("startup") }
+        // A recording the user started before ignition-off continues into the same
+        // file, so the startup itself (launch automations, steering-wheel keys) is
+        // in the log the user sends us.
+        serviceScope.launch {
+            // Retried while nothing is recording: this early the storage holding the
+            // log may still be unmounted, and a resumed logcat can die right away
+            // when the READ_LOGS grant above has not landed yet.
+            repeat(LOG_RESUME_ATTEMPTS) { attempt ->
+                if (attempt > 0) delay(LOG_RESUME_RETRY_DELAY_MS)
+                if (!logRecorder.state.value.isRecording && logRecorder.resumeIfPending()) {
+                    Log.i(TAG, "log recording resumed: ${logRecorder.state.value.filePath}")
+                }
+            }
+        }
         registerScreenWakeReceiver()
 
         // Start the network monitor BEFORE polling so the first evaluate() tick
@@ -840,6 +888,25 @@ class TrackingService : Service(), LocationListener {
             "samples=${liveTripBuffer.sampleCount()}")
 
         maybeRearmNotificationListenerGrant(now)
+    }
+
+    /**
+     * Logs the range estimate breakdown, but only when the rounded rangeKm
+     * actually changed — estimate() runs on every ~3s poll tick, so logging
+     * unconditionally would flood logcat without adding diagnostic value.
+     */
+    private fun logRangeIfChanged(estimate: RangeEstimate?, soc: Int?, totalElecKwh: Double?) {
+        val roundedKm = estimate?.rangeKm?.let { Math.round(it).toInt() }
+        if (roundedKm == lastLoggedRangeKm) return
+        lastLoggedRangeKm = roundedKm
+        if (estimate == null) {
+            Log.d(TAG, "range: unavailable, soc=$soc")
+            return
+        }
+        val carry = socInterpolator.carryOver(totalElecKwh, soc)
+        Log.d(TAG, "range: avg=${"%.1f".format(estimate.avgKwhPer100)} " +
+            "carry=${"%.3f".format(carry)} remainingKwh=${"%.2f".format(estimate.remainingKwh)} " +
+            "rangeKm=${"%.1f".format(estimate.rangeKm)} soc=$soc")
     }
 
     /**
@@ -1086,7 +1153,9 @@ class TrackingService : Service(), LocationListener {
         cameraStateMonitor.stop()
         _cameraActive.value = false
         _youtubeForeground.value = false
+        _foregroundPackage.value = null
         networkAvailableMonitor.stop()
+        unregisterWifiRestoreCallback()
         try {
             unregisterReceiver(screenWakeReceiver)
         } catch (e: Exception) {
@@ -1156,6 +1225,14 @@ class TrackingService : Service(), LocationListener {
                 "provider=${location.provider}")
         }
     }
+
+    // Declared explicitly: default interface methods on compileSdk 34, but ABSTRACT on API 29 -
+    // without them Android 10 (DiLink 3.0/4.0) throws AbstractMethodError from LocationManager's
+    // ListenerTransport whenever the GPS provider toggles (ignition off/on), killing the process.
+    override fun onProviderEnabled(provider: String) { /* no-op */ }
+    override fun onProviderDisabled(provider: String) { /* no-op */ }
+    @Deprecated("Deprecated in Java")
+    override fun onStatusChanged(provider: String?, status: Int, extras: android.os.Bundle?) { /* no-op */ }
 
     private fun startPolling() {
         Log.i(TAG, "Starting polling via SharedAdaptiveLoop")
@@ -1252,8 +1329,16 @@ class TrackingService : Service(), LocationListener {
                             lastHelperRespawnAtMs = now
                             Log.w(TAG, "Helper daemon unhealthy, attempting respawn")
                             serviceScope.launch {
-                                runCatching { helperBootstrap.ensureRunning() }
+                                val respawned = runCatching { helperBootstrap.ensureRunning() }
                                     .onFailure { Log.w(TAG, "Helper respawn failed: ${it.message}") }
+                                    .getOrDefault(false)
+                                // Trigger 3: either verdict is a reason to check the restore state.
+                                // A daemon that just came back means the classic port is alive right
+                                // now — the one window a self-grant of WRITE_SECURE_SETTINGS can use
+                                // (see AdbRestoreManager.attemptLocked). A daemon that will not come
+                                // back usually means the ADB channel under it is gone (port closed by
+                                // a reboot).
+                                adbRestoreManager.attemptIfNeeded(if (respawned) "helper_respawned" else "watchdog")
                             }
                         }
                     }
@@ -1323,12 +1408,14 @@ class TrackingService : Service(), LocationListener {
                         shortAvg = shortAvg,
                     )
 
-                    val rangeKm = rangeCalculator.estimate(
+                    val rangeEstimate = rangeCalculator.estimateDetailed(
                         soc = data.soc,
                         totalElecKwh = data.totalElecConsumption,
                         batteryTempC = data.avgBatTemp,
                     )
+                    val rangeKm = rangeEstimate?.rangeKm
                     _lastRangeKm.value = rangeKm
+                    logRangeIfChanged(rangeEstimate, data.soc, data.totalElecConsumption)
 
                     _tripDistanceKm.value = tripDistance
                     _tripKwhConsumed.value = tripKwhConsumed
@@ -1430,8 +1517,18 @@ class TrackingService : Service(), LocationListener {
                 if (adbOnDeviceClient.connect().isSuccess) {
                     val granted = adbOnDeviceClient.grantUsageStatsAppop(packageName)
                     Log.i(TAG, "GET_USAGE_STATS appop grant: $granted")
+                    // Self-grant while the classic port still answers, regardless of the restore
+                    // toggle: on firmwares that close the port at every reboot this is the last
+                    // moment a shell command can reach us, and the permission is what lets the
+                    // app turn wireless debugging on later. Idempotent.
+                    val secureSettings = adbOnDeviceClient.grantWriteSecureSettings("com.bydmate.app")
+                    val held = checkSelfPermission(Manifest.permission.WRITE_SECURE_SETTINGS) ==
+                        PackageManager.PERMISSION_GRANTED
+                    Log.i(TAG, "WRITE_SECURE_SETTINGS grant: $secureSettings held=$held")
                 } else {
                     Log.w(TAG, "ADB connect refused — camera detection may be inactive until appop is granted manually")
+                    // Trigger 1: the port is dead on service start — try to bring it back.
+                    adbRestoreManager.attemptIfNeeded("service_start")
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "ADB appop grant failed: ${e.message}")
@@ -1444,6 +1541,72 @@ class TrackingService : Service(), LocationListener {
         serviceScope.launch {
             cameraStateMonitor.youtubeForeground.collect { _youtubeForeground.value = it }
         }
+        serviceScope.launch {
+            cameraStateMonitor.foregroundPackage.collect { _foregroundPackage.value = it }
+        }
+    }
+
+    /**
+     * Re-runs the ADB restore when Wi-Fi appears. Registered unconditionally — the manager
+     * itself checks the toggle and the classic port, so a car that never needs the feature
+     * pays one callback and nothing else.
+     */
+    private fun registerWifiRestoreCallback() {
+        if (wifiRestoreCallback != null) return
+        val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return
+        val callback = object : ConnectivityManager.NetworkCallback() {
+            // The network that last reported itself validated. onCapabilitiesChanged fires many
+            // times per connection, so only the transition into validated triggers an attempt.
+            private var validated: Network? = null
+
+            override fun onAvailable(network: Network) {
+                serviceScope.launch {
+                    runCatching { adbRestoreManager.attemptIfNeeded("wifi") }
+                        .onFailure { Log.w(TAG, "ADB restore on wifi failed: ${it.message}") }
+                }
+            }
+
+            // onAvailable fires before the link actually carries traffic; wireless debugging needs
+            // a usable network, so the validated capability is the moment worth writing on.
+            override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) {
+                val usable = caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+                if (!usable) {
+                    if (validated == network) validated = null
+                    return
+                }
+                if (validated == network) return
+                validated = network
+                serviceScope.launch {
+                    runCatching { adbRestoreManager.attemptIfNeeded("wifi_validated") }
+                        .onFailure { Log.w(TAG, "ADB restore on validated wifi failed: ${it.message}") }
+                }
+            }
+
+            override fun onLost(network: Network) {
+                if (validated == network) validated = null
+            }
+        }
+        try {
+            val request = NetworkRequest.Builder()
+                .addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
+                .build()
+            cm.registerNetworkCallback(request, callback)
+            wifiRestoreCallback = callback
+        } catch (e: Exception) {
+            Log.w(TAG, "Wi-Fi callback registration failed: ${e.message}")
+        }
+    }
+
+    private fun unregisterWifiRestoreCallback() {
+        val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+        wifiRestoreCallback?.let { callback ->
+            try {
+                cm?.unregisterNetworkCallback(callback)
+            } catch (e: Exception) {
+                Log.w(TAG, "Wi-Fi callback unregister failed: ${e.message}")
+            }
+        }
+        wifiRestoreCallback = null
     }
 
     private fun startLocationUpdates() {
@@ -1516,6 +1679,13 @@ class TrackingService : Service(), LocationListener {
         override fun onReceive(context: Context?, intent: Intent?) {
             serviceScope.launch { ensureStarServiceRunning("wake:${intent?.action}") }
             serviceScope.launch { notificationListenerGrant.ensure("wake:${intent?.action}") }
+            // Trigger 4: the wireless-debugging dialog can only be confirmed on an awake screen,
+            // so a wake is the cheapest moment to re-check whether it was. The manager gates itself.
+            val trigger = if (intent?.action == Intent.ACTION_USER_PRESENT) "user_present" else "screen_on"
+            serviceScope.launch {
+                runCatching { adbRestoreManager.attemptIfNeeded(trigger) }
+                    .onFailure { Log.w(TAG, "ADB restore on $trigger failed: ${it.message}") }
+            }
         }
     }
 
@@ -1540,6 +1710,31 @@ class TrackingService : Service(), LocationListener {
      * that: verify-and-retry, gated on the TRUE liveness signal (SteeringWheelKeyService.isConnected)
      * plus the framework's running list, so a healthy service is never disturbed.
      */
+    // Diagnostic (DiLink 4 / Android 10): once the stuck state is named, poll the service state
+    // for ten minutes so a field log shows WHEN it clears (e.g. after the user taps a third-party
+    // launcher's privilege button) and whether our process survived (pid). Read-only, one at a time.
+    @Volatile private var a11yStuckWatch: kotlinx.coroutines.Job? = null
+    private fun startA11yStuckWatch() {
+        if (a11yStuckWatch?.isActive == true) return
+        a11yStuckWatch = serviceScope.launch {
+            val t0 = System.currentTimeMillis()
+            var wasRunning = false
+            repeat(60) { i ->
+                val running = starServiceRunning()
+                val listHasUs = runCatching {
+                    android.provider.Settings.Secure.getString(contentResolver, "enabled_accessibility_services")
+                        ?.contains(packageName) == true
+                }.getOrDefault(false)
+                Log.i(TAG, "a11y stuck watch +${(System.currentTimeMillis() - t0) / 1000}s: running=$running " +
+                    "enabledListHasUs=$listHasUs pid=${android.os.Process.myPid()}")
+                if (running && !wasRunning && i > 0) Log.w(TAG, "a11y stuck watch: service came back without our re-assert")
+                wasRunning = running
+                if (running) return@launch
+                kotlinx.coroutines.delay(10_000L)
+            }
+        }
+    }
+
     private suspend fun ensureStarServiceRunning(reason: String) {
         val prefs = getSharedPreferences(ClusterProjectionManager.PREFS_NAME, Context.MODE_PRIVATE)
         val mirrorEnabled = prefs.getBoolean(ClusterProjectionManager.KEY_MIRROR_ENABLED, false)
@@ -1554,6 +1749,33 @@ class TrackingService : Service(), LocationListener {
         // support, not the raw pref, so unsupported cars stay untouched (Codex fix 1).
         if (!mirrorEnabled && !voiceEnabled && !knobEnabled && !hudController.requiresA11y()) return
         starGrant.ensure(reason)
+        // Android 10 (DiLink 3.0/4.0): once our process died while bound, AccessibilityManagerService
+        // parks the component in mBindingServices and skips it on every settings rewrite until a
+        // package update, force-stop or reboot (AOSP Q updateServicesLocked, "wait for the binding").
+        // The daemon's remove+re-add then reports success while the framework never binds. Name the
+        // state only when every re-assert succeeded (daemon path healthy) and the service still is
+        // not running - all-false re-asserts mean a broken daemon, not a stuck framework.
+        val last = GrantSelfHeal.history().lastOrNull { it.name == "star a11y" }
+        val daemonOkButUnbound = last != null && !last.granted &&
+            last.reasserts.isNotEmpty() && last.reasserts.all { it }
+        if (android.os.Build.VERSION.SDK_INT <= 29 && daemonOkButUnbound && !starServiceRunning()) {
+            Log.w(TAG, "star a11y stuck in binding state ($reason): daemon re-asserted the setting " +
+                "${last.reasserts.size}x OK but the framework did not bind (AOSP Q mBindingServices)")
+            startA11yStuckWatch()
+            // Only in-framework way out: IActivityManager.forceStopPackage on ourselves, which runs
+            // PackageMonitor.onHandleForceStop and clears mBindingServices. The daemon does it and
+            // restarts us, so this call kills our own process - mark the attempt BEFORE it.
+            val nowElapsed = android.os.SystemClock.elapsedRealtime()
+            if (A11yRecoveryGate.shouldAttempt(prefs, nowElapsed)) {
+                if (A11yRecoveryGate.markAttempt(prefs, nowElapsed)) {
+                    Log.w(TAG, "star a11y recovery: asking daemon to force-stop + re-bind " +
+                        "(streak=${prefs.getInt(A11yRecoveryGate.KEY_FAIL_STREAK, 0)})")
+                    helperClient.recoverAccessibilityService()
+                } else {
+                    Log.w(TAG, "star a11y recovery: skipped, could not persist the rate-limit mark")
+                }
+            }
+        }
     }
 
     private fun notificationListenerGranted(): Boolean {
@@ -1588,8 +1810,23 @@ class TrackingService : Service(), LocationListener {
             description = "Trip and charge tracking"
             setShowBadge(false)
         }
+        val quiet = NotificationChannel(
+            QUIET_CHANNEL_ID,
+            "BYDMate Tracking (quiet)",
+            NotificationManager.IMPORTANCE_MIN
+        ).apply {
+            description = "Trip and charge tracking, collapsed in the shade"
+            setShowBadge(false)
+        }
         val nm = getSystemService(NotificationManager::class.java)
         nm.createNotificationChannel(channel)
+        nm.createNotificationChannel(quiet)
+    }
+
+    private fun activeChannelId(): String {
+        val quiet = getSharedPreferences(ClusterProjectionManager.PREFS_NAME, Context.MODE_PRIVATE)
+            .getBoolean(KEY_QUIET_NOTIFICATION, false)
+        return if (quiet) QUIET_CHANNEL_ID else CHANNEL_ID
     }
 
     private fun buildNotification(text: String): Notification {
@@ -1598,7 +1835,7 @@ class TrackingService : Service(), LocationListener {
             Intent(this, MainActivity::class.java),
             PendingIntent.FLAG_IMMUTABLE
         )
-        return NotificationCompat.Builder(this, CHANNEL_ID)
+        return NotificationCompat.Builder(this, activeChannelId())
             .setContentTitle("BYDMate")
             .setContentText(text)
             .setSmallIcon(android.R.drawable.ic_menu_compass)

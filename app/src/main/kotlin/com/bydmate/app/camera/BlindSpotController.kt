@@ -27,6 +27,7 @@ import com.bydmate.app.cluster.ClusterJournal
 import com.bydmate.app.cluster.ClusterMode
 import com.bydmate.app.cluster.ClusterProjectionManager
 import com.bydmate.app.cluster.MAX_PROJECTION_PCT
+import com.bydmate.app.cluster.cameraNeedsCompositor
 import com.bydmate.app.cluster.geometryFor
 import com.bydmate.app.data.remote.DiParsData
 import com.bydmate.app.data.autoservice.SentinelDecoder
@@ -40,6 +41,7 @@ import kotlinx.coroutines.ExecutorCoroutineDispatcher
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.asCoroutineDispatcher
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.cancelChildren
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -100,8 +102,13 @@ class BlindSpotController @Inject constructor(
     /** True while [clusterWindow] is the mirrored PiP on the main screen (this car has no
      *  projection display) — the cluster compositor must stay untouched then. */
     private var clusterOnMainScreen = false
+
+    /** Whether the attached windows were built with the "both on the main screen" opt-in on. */
+    private var mirrorByChoice = false
     /** Geometry the PiP window currently carries; a mismatch with the settings re-applies it. */
     private var appliedPipRect: Rect? = null
+    /** Geometry the left main-screen window currently has; null when there is no such window. */
+    private var appliedLeftRect: Rect? = null
     /** Projection-overlay attach counter as of our own attach; a later value means the overlay
      *  was (re)added above our cluster window and we have to re-attach on top of it. */
     private var lastOverlayEpoch = 0
@@ -110,6 +117,8 @@ class BlindSpotController @Inject constructor(
     private val pendingDetach = mutableListOf<PreviewWindow>()
 
     private var shownSide = BlindSpotSide.NONE
+    /** elapsedRealtime of the last transition to a shown side; the stall watchdog counts from here. */
+    private var shownAt = 0L
     private var lastRequestedSide = BlindSpotSide.NONE
     private var cameraOpen = false
     private var compositorPowered = false   // last CONFIRMED compositor state
@@ -186,6 +195,14 @@ class BlindSpotController @Inject constructor(
         if (!prefs.enabled) {
             awaitTeardown("feature switched off")
             cancelFastLoop()
+            return
+        }
+
+        // The screen preference can flip mid-drive too, and the routing is decided once, at
+        // attach time. Comparing against the preference the attached windows were built from
+        // keeps this off the display manager on every tick.
+        if ((clusterWindow != null || pipWindow != null) && mirrorByChoice != prefs.bothOnMain) {
+            awaitTeardown("blind-spot screen preference changed")
             return
         }
 
@@ -301,16 +318,36 @@ class BlindSpotController @Inject constructor(
             cameraOpen = true
             cameraOpenedAt = now
             Log.i(TAG, "camera warm on indexes ${surfaces.keys.joinToString()}")
+            clusterJournal.append("camera: open indexes=${surfaces.keys.joinToString()}")
             return
         }
 
         // The first update after open carries a stale buffer, so #2 is the first honest frame.
         val gotFrame = clusterWindow?.hasValidFrame == true || pipWindow?.hasValidFrame == true
-        if (!gotFrame && now - cameraOpenedAt >= FIRST_FRAME_TIMEOUT_MS) failCamera("no frame", now)
+        if (!gotFrame) {
+            if (now - cameraOpenedAt >= FIRST_FRAME_TIMEOUT_MS) failCamera("no frame", now)
+            return
+        }
+
+        // The vendor stream can go quiet while the camera stays open (field 2026-08-25): the
+        // TextureView keeps the last buffer, so every following blinker shows a frozen picture.
+        // Only the shown window proves it — a hidden one is off screen and may not be redrawn.
+        // Measured from the show, not from the last frame: a window parked off screen may have
+        // stopped updating long ago, and the stream needs a moment to catch up once it is shown.
+        val clusterStalled = clusterWindow?.let {
+            blindSpotFrameStalled(
+                shownSide == BlindSpotSide.LEFT, it.hasValidFrame, maxOf(it.lastFrameAt, shownAt), now)
+        } ?: false
+        val pipStalled = pipWindow?.let {
+            blindSpotFrameStalled(
+                shownSide == BlindSpotSide.RIGHT, it.hasValidFrame, maxOf(it.lastFrameAt, shownAt), now)
+        } ?: false
+        if (clusterStalled || pipStalled) failCamera("frame stall", now)
     }
 
     private suspend fun failCamera(reason: String, now: Long) {
         Log.w(TAG, "camera error: $reason; retry in ${RETRY_DELAY_MS / 1000} s")
+        clusterJournal.append("camera: error $reason, retry in ${RETRY_DELAY_MS / 1000} s")
         awaitTeardown(reason)
         retryAt = now + RETRY_DELAY_MS
     }
@@ -326,10 +363,14 @@ class BlindSpotController @Inject constructor(
         // up as a mismatch on the next tick, which costs one redundant re-attach — the other
         // order would miss it and leave the camera buried under the overlay.
         lastOverlayEpoch = ClusterProjectionManager.overlayEpoch()
-        // No projection display (non-Leopard-3 trims, or the cluster is not fissioned): the left
-        // camera falls back to a mirrored window on the main screen, and setClusterContainerMode
-        // is never called — powering a compositor that does not exist would black the cluster out.
-        val display = clusterDisplay()
+        // No projection display (non-Leopard-3 trims, or the cluster is not fissioned), or the
+        // driver asked for both cameras on the main screen (#183): the left camera falls back to a
+        // mirrored window there, and setClusterContainerMode is never called — powering a
+        // compositor that does not exist, or that the driver opted out of, would black the cluster
+        // out.
+        mirrorByChoice = prefs.bothOnMain
+        val panel = clusterDisplay()
+        val display = if (blindSpotUsesMirror(mirrorByChoice, panel != null)) null else panel
         if (display == null) {
             attachMirrorWindow()
         } else {
@@ -386,54 +427,53 @@ class BlindSpotController @Inject constructor(
         )
     }
 
-    /** Left camera on a car without a cluster to project onto: the right PiP mirrored across the
-     *  screen, so the two windows sit symmetrically wherever the driver placed the right one. */
+    /** Left camera on a car without a cluster to project onto: its own place once the driver set
+     *  one (#183), the right PiP mirrored across the screen until then. */
     private fun attachMirrorWindow() {
-        val rect = mirrorRect(pipRect())
+        val rect = leftPipRect()
         val window = PreviewWindow("left-pip")
         if (window.attach(context, pipParams(rect), offscreenX(rect.width()))) {
             clusterWindow = window
             clusterOnMainScreen = true
+            appliedLeftRect = rect
         }
     }
 
-    /** Re-applies the PiP geometry after the user changed the width or dragged the window. */
+    /** Re-applies the PiP geometry after the user changed the width or dragged a window. */
     private fun applyPipGeometry() {
         if (pipWindow == null && !clusterOnMainScreen) return
         val rect = pipRect()
-        if (rect == appliedPipRect) return
+        // The left window has its own saved corner, so it can move while the right one stands still.
+        val left = if (clusterOnMainScreen) leftPipRect() else null
+        if (rect == appliedPipRect && left == appliedLeftRect) return
         var applied = true
         pipWindow?.let { if (!it.setGeometry(rect, offscreenX(rect.width()))) applied = false }
-        if (clusterOnMainScreen) {
-            val mirror = mirrorRect(rect)
+        if (left != null) {
             clusterWindow?.let {
-                if (!it.setGeometry(mirror, offscreenX(mirror.width()))) applied = false
+                if (!it.setGeometry(left, offscreenX(left.width()))) applied = false
             }
         }
-        if (applied) appliedPipRect = rect
-    }
-
-    /** Reflection of a main-screen rect across the vertical axis of the screen. */
-    private fun mirrorRect(rect: Rect): Rect {
-        val screenWidth = realMetrics(defaultDisplay()).widthPixels
-        val left = (screenWidth - rect.right).coerceAtLeast(0)
-        return Rect(left, rect.top, left + rect.width(), rect.bottom)
+        if (applied) {
+            appliedPipRect = rect
+            appliedLeftRect = left
+        }
     }
 
     /** Main-screen PiP geometry: 16:9 of the width slider, at the corner the user dragged it to
      *  (the default slot until then), clamped to the screen. */
     private fun pipRect(): Rect {
         val metrics = realMetrics(defaultDisplay())
-        val widthPct = prefs.pipWidthPct
-        val x = prefs.pipXPx
-        val y = prefs.pipYPx
-        if (x == BlindSpotPreferences.UNSET_PX || y == BlindSpotPreferences.UNSET_PX) {
-            return BlindSpotPreferences.defaultPipRect(metrics.widthPixels, metrics.heightPixels, widthPct)
-        }
-        val size = BlindSpotPreferences.pipSize(metrics.widthPixels, widthPct)
-        val left = x.coerceIn(0, (metrics.widthPixels - size.width).coerceAtLeast(0))
-        val top = y.coerceIn(0, (metrics.heightPixels - size.height).coerceAtLeast(0))
-        return Rect(left, top, left + size.width, top + size.height)
+        return BlindSpotPreferences.placedPipRect(
+            metrics.widthPixels, metrics.heightPixels, prefs.pipWidthPct, prefs.pipXPx, prefs.pipYPx)
+    }
+
+    /** Geometry of the left window on the main screen; mirrors [pipRect] while it has no own place. */
+    private fun leftPipRect(): Rect {
+        val metrics = realMetrics(defaultDisplay())
+        return BlindSpotPreferences.leftPipRect(
+            metrics.widthPixels, metrics.heightPixels, prefs.pipWidthPct,
+            prefs.leftPipXPx, prefs.leftPipYPx, pipRect(),
+        )
     }
 
     private fun pipParams(rect: Rect): WindowManager.LayoutParams =
@@ -485,6 +525,7 @@ class BlindSpotController @Inject constructor(
         }
         val previous = shownSide
         shownSide = side
+        if (side != BlindSpotSide.NONE) shownAt = SystemClock.elapsedRealtime()
         Log.i(TAG, "show $previous -> $side")
         if (side == BlindSpotSide.LEFT) {
             requestCompositor(true)
@@ -498,9 +539,14 @@ class BlindSpotController @Inject constructor(
     /** Fire-and-forget compositor switch for the show path; one job at a time. */
     private fun requestCompositor(on: Boolean) {
         if (on == compositorTarget) return
-        // Only the window that actually sits on the projection display needs the compositor;
-        // the mirrored main-screen fallback must never touch a cluster that has none.
-        if (on && (clusterWindow == null || clusterOnMainScreen)) return
+        // Only the window that actually sits on the projection display needs the compositor, and
+        // only when the user lets us drive it (auto-container on, same gate as the projection);
+        // the mirrored main-screen fallback must never touch a cluster that has none. Skipped on
+        // the way UP, the target never flips, so no power-down runs on the way back either.
+        if (on && !cameraNeedsCompositor(
+                ClusterProjectionManager.autoContainerEnabled(context),
+                clusterWindow != null,
+                clusterOnMainScreen)) return
         compositorTarget = on
         compositorJob?.cancel()
         compositorJob = ownScope.launch { applyCompositor(on) }
@@ -579,20 +625,26 @@ class BlindSpotController @Inject constructor(
         try {
             // Camera first: nothing may write into a surface that is about to be released.
             if (cameraOpen) {
+                clusterJournal.append("camera: teardown $reason")
                 withContext(cameraDispatcher()) { probe.close() }
                 cameraOpen = false
             }
             applyShow(BlindSpotSide.NONE)
-            compositorJob?.cancel()
+            // Join, not just cancel: the blocking binder call inside cannot be interrupted, and
+            // its confirmed result must land in compositorPowered before the check below, or a
+            // power-up that completes after we looked leaves the cluster black.
+            compositorJob?.cancelAndJoin()
             compositorJob = null
             compositorTarget = false
             if (compositorPowered) applyCompositor(false)
             releaseWindow(clusterWindow)
             clusterWindow = null
             clusterOnMainScreen = false
+            mirrorByChoice = false
             releaseWindow(pipWindow)
             pipWindow = null
             appliedPipRect = null
+            appliedLeftRect = null
         } finally {
             // No windows left, so nothing is shown regardless of where the flips left them.
             shownSide = BlindSpotSide.NONE
@@ -636,6 +688,10 @@ class BlindSpotController @Inject constructor(
         private var glow: View? = null
         private var glowAnimator: ValueAnimator? = null
         private var frames = 0
+
+        /** elapsedRealtime of the last surface update; read from the fast loop, written on Main. */
+        @Volatile var lastFrameAt = 0L
+            private set
 
         private var shownX = 0
         private var hiddenX = 0
@@ -778,6 +834,7 @@ class BlindSpotController @Inject constructor(
             params = null
             wm = null
             frames = 0
+            lastFrameAt = 0L
             shown = false
             Log.i(TAG, "$label window removed")
             return true
@@ -787,6 +844,7 @@ class BlindSpotController @Inject constructor(
             surface?.release()
             surface = Surface(texture)
             frames = 0
+            lastFrameAt = 0L
             applyCrop(width, height)
         }
 
@@ -806,6 +864,7 @@ class BlindSpotController @Inject constructor(
 
         override fun onSurfaceTextureUpdated(texture: SurfaceTexture) {
             if (frames < 2) frames++
+            lastFrameAt = SystemClock.elapsedRealtime()
         }
 
         /** Centered crop of the side buffer to the window's own aspect, scaled to fill it —

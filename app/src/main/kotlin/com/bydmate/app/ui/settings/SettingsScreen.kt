@@ -8,6 +8,7 @@ import android.widget.Toast
 import com.bydmate.app.camera.BlindSpotPositionOverlay
 import com.bydmate.app.camera.BlindSpotPreferences
 import com.bydmate.app.cluster.ClusterEntryPoint
+import com.bydmate.app.data.autoservice.AdbRestoreState
 import com.bydmate.app.cluster.ClusterProjectionManager
 import com.bydmate.app.cluster.CENTER_OFFSET_PCT
 import com.bydmate.app.cluster.MAX_OFFSET_PCT
@@ -116,9 +117,11 @@ import com.bydmate.app.cluster.SteeringWheelKeyService
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.filterNotNull
 import com.bydmate.app.R
+import com.bydmate.app.agent.LlmAgentBackend
 import com.bydmate.app.data.remote.OpenRouterModel
 import com.bydmate.app.data.repository.SettingsRepository
 import com.bydmate.app.ui.components.AppLaunchPickerDialog
+import com.bydmate.app.ui.components.MultiAppPickerDialog
 import com.bydmate.app.ui.components.bydSwitchColors
 import com.bydmate.app.ui.theme.*
 import android.Manifest
@@ -733,6 +736,22 @@ private fun IntegrationsSection(state: SettingsUiState, viewModel: SettingsViewM
         state.customModelsError?.let {
             Text(it, color = SocRed, fontSize = 12.sp, lineHeight = 16.sp)
         }
+        SettingsTextField(
+            label = stringResource(R.string.settings_custom_extra_json_label),
+            value = state.customExtraJson,
+            onValueChange = { viewModel.saveCustomExtraJson(it) },
+            keyboardType = KeyboardType.Text,
+            singleLine = false
+        )
+        SettingHint(stringResource(R.string.settings_custom_extra_json_hint))
+        if (state.customExtraJson.isNotBlank() &&
+            LlmAgentBackend.parseExtraJson(state.customExtraJson) == null
+        ) {
+            Text(
+                stringResource(R.string.settings_custom_extra_json_invalid),
+                color = SocRed, fontSize = 12.sp, lineHeight = 16.sp
+            )
+        }
     }
 
     // Custom model picker dialog
@@ -809,7 +828,10 @@ private fun WidgetSection() {
     )
     val hideOnYoutube by prefs.hideOnYoutubeFlow()
         .collectAsStateWithLifecycle(initialValue = prefs.isHideOnYoutube())
+    val hideInApps by prefs.hideInAppsFlow()
+        .collectAsStateWithLifecycle(initialValue = prefs.getHideInApps())
     var showLeftTapPicker by remember { mutableStateOf(false) }
+    var showHideInAppsPicker by remember { mutableStateOf(false) }
 
     SectionHeader(text = stringResource(R.string.settings_widget_section_header))
     Card(
@@ -849,6 +871,16 @@ private fun WidgetSection() {
                 description = stringResource(R.string.settings_widget_hide_youtube_description),
                 checked = hideOnYoutube,
                 onCheckedChange = { prefs.setHideOnYoutube(it) },
+            )
+            SettingValueRow(
+                title = stringResource(R.string.settings_widget_hide_apps_label),
+                description = stringResource(R.string.settings_widget_hide_apps_description),
+                value = if (hideInApps.isEmpty()) {
+                    stringResource(R.string.settings_widget_hide_apps_none)
+                } else {
+                    stringResource(R.string.settings_widget_hide_apps_count, hideInApps.size)
+                },
+                onClick = { showHideInAppsPicker = true },
             )
             SettingSliderRow(
                 title = stringResource(R.string.settings_widget_opacity_label),
@@ -949,6 +981,18 @@ private fun WidgetSection() {
             showMinimizeToggle = false,
         )
     }
+
+    if (showHideInAppsPicker) {
+        MultiAppPickerDialog(
+            title = stringResource(R.string.settings_widget_hide_apps_label),
+            selectedPackages = hideInApps,
+            onDismiss = { showHideInAppsPicker = false },
+            onConfirm = { picked ->
+                prefs.setHideInApps(picked)
+                showHideInAppsPicker = false
+            },
+        )
+    }
 }
 
 @Composable
@@ -1014,6 +1058,9 @@ private fun DisplaySection() {
     }
     var extendedConfirmOpen by remember { mutableStateOf(false) }
     var modeHelpOpen by remember { mutableStateOf(false) }
+    var preferFullDisplay by remember {
+        mutableStateOf(ClusterProjectionManager.isPreferFullDisplay(context))
+    }
 
     // Persist the new size and re-apply it live. reproject() is a no-op unless we are actively
     // projecting, so a tweak while OFF just lands in prefs and shows on the next star press.
@@ -1098,6 +1145,19 @@ private fun DisplaySection() {
         if (modeHelpOpen) {
             SettingHint(text = stringResource(R.string.settings_projection_mode_help))
         }
+        SettingDivider()
+        // Which cluster projection surface to render on: the native mini band ("..._1", default)
+        // or the full cluster ("..._0"). Only the pref is written — like the transport chip, it
+        // applies at the next projection start, never to a live projection.
+        SettingToggleRow(
+            title = stringResource(R.string.settings_cluster_full_display_title),
+            description = stringResource(R.string.settings_cluster_full_display_desc),
+            checked = preferFullDisplay,
+            onCheckedChange = {
+                preferFullDisplay = it
+                ClusterProjectionManager.setPreferFullDisplay(context, it)
+            },
+        )
         if (extendedConfirmOpen) {
             AlertDialog(
                 onDismissRequest = { extendedConfirmOpen = false },
@@ -1324,14 +1384,18 @@ private fun BlindSpotCard() {
             BlindSpotPreferences.KEY_PIP_WIDTH_PCT, BlindSpotPreferences.DEFAULT_PIP_WIDTH_PCT))
     }
     var bsdGlow by remember { mutableStateOf(prefs.getBoolean(BlindSpotPreferences.KEY_BSD_GLOW, true)) }
+    var bothOnMain by remember {
+        mutableStateOf(prefs.getBoolean(BlindSpotPreferences.KEY_BOTH_ON_MAIN, false))
+    }
 
     // Drag-to-place preview: it lives in a WindowManager overlay, so leaving the screen has to
-    // take it down explicitly. The flag follows the window rather than the clicks — the overlay
-    // also goes away on its own idle timer.
-    val placingState = remember { mutableStateOf(false) }
+    // take it down explicitly. The state follows the window rather than the clicks — the overlay
+    // also goes away on its own idle timer. One window at a time, so the side being placed is
+    // the state (null = nothing on screen).
+    val placingState = remember { mutableStateOf<BlindSpotPositionOverlay.Side?>(null) }
     var placing by placingState
     val positionOverlay = remember {
-        BlindSpotPositionOverlay().apply { onHidden = { placingState.value = false } }
+        BlindSpotPositionOverlay().apply { onHidden = { placingState.value = null } }
     }
     // MainActivity survives configuration changes, so onDispose alone never fires when the driver
     // goes Home — an opaque touchable window would stay over whatever is on screen.
@@ -1401,7 +1465,7 @@ private fun BlindSpotCard() {
             enabled = enabled,
             onValueChangeFinished = {
                 prefs.edit().putInt(BlindSpotPreferences.KEY_PIP_WIDTH_PCT, pipWidthPct).apply()
-                if (placing) positionOverlay.refreshSize()
+                if (placing != null) positionOverlay.refreshSize()
             },
         )
         SettingDivider()
@@ -1409,14 +1473,53 @@ private fun BlindSpotCard() {
             title = stringResource(R.string.settings_blindspot_position_title),
             description = stringResource(R.string.settings_blindspot_position_desc),
             buttonLabel = stringResource(
-                if (placing) R.string.settings_blindspot_position_done
+                if (placing == BlindSpotPositionOverlay.Side.RIGHT) R.string.settings_blindspot_position_done
                 else R.string.settings_blindspot_position_button
             ),
             onClick = {
-                if (placing) positionOverlay.hide() else placing = positionOverlay.show(context)
+                val side = BlindSpotPositionOverlay.Side.RIGHT
+                // Read before hide(): hiding clears [placing] through onHidden, and a second
+                // tap on the same row must close the window, not reopen it.
+                val closing = placing == side
+                positionOverlay.hide()
+                if (!closing && positionOverlay.show(context, side)) placing = side
             },
             enabled = enabled,
         )
+        SettingDivider()
+        SettingToggleRow(
+            title = stringResource(R.string.settings_blindspot_both_main_title),
+            description = stringResource(R.string.settings_blindspot_both_main_desc),
+            checked = bothOnMain,
+            onCheckedChange = {
+                bothOnMain = it
+                prefs.edit().putBoolean(BlindSpotPreferences.KEY_BOTH_ON_MAIN, it).apply()
+                // The left window only exists on the main screen while this is on; its placement
+                // row goes away with it, and an open drag overlay would have nothing to dismiss it.
+                if (!it && placing == BlindSpotPositionOverlay.Side.LEFT) positionOverlay.hide()
+            },
+            enabled = enabled,
+        )
+        // Only when the left camera is actually shown on the main screen — there is nothing to
+        // place otherwise (it lives on the cluster panel).
+        if (bothOnMain) {
+            SettingDivider()
+            SettingActionRow(
+                title = stringResource(R.string.settings_blindspot_left_position_title),
+                description = stringResource(R.string.settings_blindspot_left_position_desc),
+                buttonLabel = stringResource(
+                    if (placing == BlindSpotPositionOverlay.Side.LEFT) R.string.settings_blindspot_position_done
+                    else R.string.settings_blindspot_position_button
+                ),
+                onClick = {
+                    val side = BlindSpotPositionOverlay.Side.LEFT
+                    val closing = placing == side
+                    positionOverlay.hide()
+                    if (!closing && positionOverlay.show(context, side)) placing = side
+                },
+                enabled = enabled,
+            )
+        }
         SettingDivider()
         SettingToggleRow(
             title = stringResource(R.string.settings_blindspot_glow_title),
@@ -2019,6 +2122,61 @@ private fun ServiceSection(
         }
     }
 
+    // ADB restore (firmwares that close port 5555 on every reboot). The toggle is shown on
+    // every car: where the port survives a reboot the status line simply says so.
+    val adbRestore = remember { clusterEntryPoint.adbRestoreManager() }
+    var adbRestoreEnabled by remember { mutableStateOf(adbRestore.isEnabled()) }
+    var adbRestoreHelpOpen by remember { mutableStateOf(false) }
+    val adbRestoreState by adbRestore.state.collectAsStateWithLifecycle()
+    // Opening Settings with the feature on refreshes the status line (and picks the port back
+    // up if it is down) instead of showing whatever the last trigger left behind. Keyed on the
+    // toggle, so switching it on runs an attempt right away. The attempt runs in the manager's
+    // own scope, not this composition: leaving the screen used to kill the helper bootstrap that
+    // follows a successful restore.
+    LaunchedEffect(adbRestoreEnabled) {
+        if (adbRestoreEnabled) adbRestore.requestAttempt("settings")
+    }
+    Card(
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(containerColor = CardSurfaceElevated),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(modifier = Modifier.padding(horizontal = 12.dp)) {
+            SettingToggleRow(
+                title = stringResource(R.string.settings_adb_restore_title),
+                description = stringResource(R.string.settings_adb_restore_desc),
+                checked = adbRestoreEnabled,
+                onCheckedChange = { enabled ->
+                    adbRestoreEnabled = enabled
+                    adbRestore.setEnabled(enabled)
+                },
+                onHelp = { adbRestoreHelpOpen = true },
+            )
+            adbRestoreStatusText(adbRestoreState)?.let { SettingHint(text = it) }
+        }
+    }
+    if (adbRestoreHelpOpen) {
+        AlertDialog(
+            onDismissRequest = { adbRestoreHelpOpen = false },
+            containerColor = CardSurface,
+            title = {
+                Text(stringResource(R.string.settings_adb_restore_help_title), color = TextPrimary)
+            },
+            text = {
+                Text(
+                    stringResource(R.string.settings_adb_restore_help_body),
+                    color = TextSecondary, fontSize = 14.sp, lineHeight = 19.sp,
+                    modifier = Modifier.verticalScroll(rememberScrollState()),
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { adbRestoreHelpOpen = false }) {
+                    Text(stringResource(R.string.nav_autostart_dialog_button), color = AccentGreen)
+                }
+            },
+        )
+    }
+
     // Hidden BYD language dialog (UI7 only). We never write the locale ourselves — the button just
     // opens the factory dialog, and the card stays hidden on firmwares that do not ship it.
     val localeIntent = remember { Intent("android.settings.LOCALE_SETTINGS1") }
@@ -2080,6 +2238,21 @@ private fun ServiceSection(
         modifier = Modifier.fillMaxWidth(),
     ) {
         Column(modifier = Modifier.padding(12.dp)) {
+            // Quiet foreground notification: the service picks the channel up on its next
+            // notification refresh (a few seconds), no restart needed.
+            var quietNotification by remember {
+                mutableStateOf(clusterPrefs.getBoolean(com.bydmate.app.service.TrackingService.KEY_QUIET_NOTIFICATION, false))
+            }
+            SettingToggleRow(
+                title = stringResource(R.string.settings_quiet_notification_title),
+                description = stringResource(R.string.settings_quiet_notification_desc),
+                checked = quietNotification,
+                onCheckedChange = {
+                    quietNotification = it
+                    clusterPrefs.edit().putBoolean(com.bydmate.app.service.TrackingService.KEY_QUIET_NOTIFICATION, it).apply()
+                },
+            )
+            SettingDivider()
             SettingActionRow(
                 title = stringResource(R.string.settings_export_csv_button),
                 description = stringResource(R.string.settings_export_csv_desc),
@@ -3096,7 +3269,8 @@ internal fun SettingsTextField(
     value: String,
     onValueChange: (String) -> Unit,
     keyboardType: KeyboardType,
-    secret: Boolean = false
+    secret: Boolean = false,
+    singleLine: Boolean = true
 ) {
     // Secret fields (API keys, tokens) are masked so screenshots and over-the-shoulder
     // looks do not leak them; the eye icon reveals the value while editing.
@@ -3105,7 +3279,8 @@ internal fun SettingsTextField(
         value = value,
         onValueChange = onValueChange,
         label = { Text(label) },
-        singleLine = true,
+        singleLine = singleLine,
+        minLines = if (singleLine) 1 else 2,
         visualTransformation = if (secret && !revealed) PasswordVisualTransformation() else VisualTransformation.None,
         keyboardOptions = KeyboardOptions(keyboardType = keyboardType),
         trailingIcon = if (secret) {
@@ -3322,3 +3497,19 @@ private fun ModelPickerDialog(
     }
 }
 
+/** Status line under the ADB restore toggle; null while the feature is off. */
+@Composable
+private fun adbRestoreStatusText(state: AdbRestoreState): String? = when (state) {
+    AdbRestoreState.Disabled -> null
+    AdbRestoreState.NotNeeded -> stringResource(R.string.settings_adb_restore_status_not_needed)
+    AdbRestoreState.NeedsActivation -> stringResource(R.string.settings_adb_restore_status_needs_activation)
+    AdbRestoreState.WaitingWifi -> stringResource(R.string.settings_adb_restore_status_waiting_wifi)
+    AdbRestoreState.NeedsDialog -> stringResource(R.string.settings_adb_restore_status_needs_dialog)
+    AdbRestoreState.Connecting -> stringResource(R.string.settings_adb_restore_status_connecting)
+    is AdbRestoreState.Restored -> stringResource(
+        R.string.settings_adb_restore_status_restored,
+        android.text.format.DateFormat.getTimeFormat(LocalContext.current)
+            .format(java.util.Date(state.atMs)),
+    )
+    is AdbRestoreState.Failed -> stringResource(R.string.settings_adb_restore_status_failed, state.reason)
+}

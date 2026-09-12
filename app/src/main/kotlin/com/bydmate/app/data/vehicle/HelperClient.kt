@@ -7,6 +7,8 @@ import android.os.Parcel
 import android.util.Log
 import android.view.Surface
 import java.io.ByteArrayOutputStream
+import com.bydmate.app.helper.HelperBinderHolder
+import com.bydmate.app.helper.DisplayDevice
 import com.bydmate.app.helper.HelperBinderProtocol
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
@@ -15,6 +17,22 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import javax.inject.Inject
 import javax.inject.Singleton
+
+/**
+ * Looks the daemon up in ServiceManager by name. Null when it was never registered — which is
+ * the normal state on firmwares that refuse addService to the shell domain (#64/#148), where the
+ * daemon reaches us through [HelperBinderHolder] instead. Shared with the diagnostic dump so both
+ * report the same transport.
+ *
+ * The hidden-API exemption for android.os.ServiceManager is installed in BYDMateApp.onCreate.
+ */
+internal fun helperServiceBinder(): IBinder? = try {
+    val sm = Class.forName("android.os.ServiceManager")
+    (sm.getMethod("getService", String::class.java)
+        .invoke(null, HelperBinderProtocol.SERVICE_NAME) as? IBinder)
+} catch (e: Exception) {
+    Log.w("HelperClient", "getService failed: ${e.message}"); null
+}
 
 /** One autoservice read request for HelperClient.readBatch: transact code (5=getInt, 7=getFloat bits), device, fid. */
 data class BatchReadItem(val tx: Int, val dev: Int, val fid: Int)
@@ -180,6 +198,31 @@ interface HelperClient {
      * has no a11y settings UI, so this is how the star-control toggle self-enables key filtering.
      */
     suspend fun enableAccessibilityService(): Boolean
+
+    /**
+     * Android 10 recovery for the a11y service parked in AccessibilityManagerService's
+     * mBindingServices (DiLink 3.0/4.0 quickboot force-stop): the daemon force-stops our package,
+     * re-enables the service and restarts our foreground service. Our own process dies mid-call,
+     * so false (timeout / dead binder) is the normal outcome, not a failure signal.
+     */
+    suspend fun recoverAccessibilityService(): Boolean
+
+    /**
+     * Asks the daemon for one read-only cluster-display diagnostic snapshot (props, display lists,
+     * projection services, SurfaceControl visibility) written to the daemon's logcat tag. Used on
+     * cars where the cluster projection display never resolves, so an ordinary user log explains
+     * why. Collection only: the daemon writes nothing and invokes no projection call.
+     */
+    suspend fun logClusterDisplayDiag(): Boolean
+
+    /**
+     * The firmware's full display inventory as the daemon reads it under shell uid (#194).
+     * Needed on firmwares that whitelist DisplayManager per app, where the app uid sees display 0
+     * only and the cluster surface is invisible to [android.hardware.display.DisplayManager].
+     * Null when the daemon is unreachable, too old to know the TX, or answered a failure status;
+     * an empty list means the dump carried no display at all.
+     */
+    suspend fun listDisplays(): List<DisplayDevice>?
 
     /** Write [value] to Settings.Global [key] via `settings put global` under shell uid.
      *  Daemon-whitelisted to sentrymode_enabled_switch and enable_freeform_support. */
@@ -383,6 +426,8 @@ interface HelperClient {
 open class HelperClientImpl @Inject constructor() : HelperClient {
     private val mutex = Mutex()
     @Volatile private var cached: IBinder? = null
+    /** Last transport reported by [noteSource] — kept so the log line is printed only on change. */
+    @Volatile private var lastSource: String? = null
 
     /** Intermediate holder for one TX_DUMP_FIDS chunk reply (chunked transport, Q4). */
     private data class DumpChunkReply(val status: Int, val totalLength: Int, val bytes: ByteArray?)
@@ -491,6 +536,52 @@ open class HelperClientImpl @Inject constructor() : HelperClient {
             val status = if (reply.dataAvail() >= 4) reply.readInt() else return@transactParsed false
             status == 0
         } ?: false
+
+    // The daemon force-stops us as its first step, so this call almost never returns: a timeout or
+    // a dead binder is the expected path and needs no logging noise. status 0 = recovery finished.
+    override suspend fun recoverAccessibilityService(): Boolean =
+        transactParsed(HelperBinderProtocol.TX_RECOVER_ACCESSIBILITY, { }, timeoutMs = FORCE_TIMEOUT_MS) { reply ->
+            val status = if (reply.dataAvail() >= 4) reply.readInt() else return@transactParsed false
+            status == 0
+        } ?: false
+
+    // FORCE_TIMEOUT_MS, not the default 2s: the snapshot spawns a handful of dumpsys processes and
+    // can take several seconds on a cold head unit. status 0 = snapshot logged.
+    override suspend fun logClusterDisplayDiag(): Boolean =
+        transactParsed(HelperBinderProtocol.TX_CLUSTER_DISPLAY_DIAG, { }) { reply ->
+            val status = if (reply.dataAvail() >= 4) reply.readInt() else return@transactParsed false
+            status == 0
+        } ?: false
+
+    // LIST_DISPLAYS_TIMEOUT_MS, not the default 2s: the daemon spawns `dumpsys display`, whose
+    // own bound is 4s, and a cold DiLink can take most of it.
+    override suspend fun listDisplays(): List<DisplayDevice>? =
+        transactParsed(HelperBinderProtocol.TX_LIST_DISPLAYS, { }, timeoutMs = LIST_DISPLAYS_TIMEOUT_MS) { reply ->
+            if (reply.dataAvail() < 8) return@transactParsed null
+            val status = reply.readInt()
+            val count = reply.readInt()
+            if (status != 0 || count < 0) return@transactParsed null
+            val out = ArrayList<DisplayDevice>(count)
+            repeat(count) {
+                // A truncated reply (foreign transport, old daemon) must not be read as an
+                // inventory that simply lacks the cluster: bail out to null instead.
+                if (reply.dataAvail() <= 0) return@transactParsed null
+                val id = reply.readInt()
+                val name = reply.readString() ?: ""
+                val width = reply.readInt()
+                val height = reply.readInt()
+                val densityDpi = reply.readInt()
+                val ownerPkg = reply.readString().orEmpty()
+                val ownerUid = reply.readInt()
+                val flags = reply.readString().orEmpty()
+                out += DisplayDevice(
+                    id, name, width, height, densityDpi,
+                    ownerPkg.ifEmpty { null }, ownerUid,
+                    flags.split(",").filter { f -> f.isNotBlank() },
+                )
+            }
+            out
+        }
 
     override suspend fun putGlobalSetting(key: String, value: Int): Boolean =
         statusOk(HelperBinderProtocol.TX_PUT_GLOBAL_SETTING) {
@@ -880,13 +971,26 @@ open class HelperClientImpl @Inject constructor() : HelperClient {
         return resolveBinder()?.also { cached = it }
     }
 
-    /** Production: look the daemon up by name. Overridable so tests can inject a fake IBinder. */
-    internal open fun resolveBinder(): IBinder? = try {
-        val sm = Class.forName("android.os.ServiceManager")
-        (sm.getMethod("getService", String::class.java)
-            .invoke(null, HelperBinderProtocol.SERVICE_NAME) as? IBinder)
-    } catch (e: Exception) {
-        Log.w(TAG, "getService failed: ${e.message}"); null
+    /**
+     * Production: look the daemon up by name, and fall back to the binder it broadcast to us
+     * when the lookup is empty (H2, #64/#148 — on qti/trinket the daemon is never allowed to
+     * register a name). Overridable so tests can inject a fake IBinder.
+     */
+    internal open fun resolveBinder(): IBinder? {
+        serviceManagerBinder()?.let { noteSource("servicemanager"); return it }
+        val fromBroadcast = HelperBinderHolder.binder?.takeIf { it.isBinderAlive } ?: return null
+        noteSource("broadcast")
+        return fromBroadcast
+    }
+
+    /** ServiceManager lookup by name. Separate seam so the broadcast fallback can be tested. */
+    internal open fun serviceManagerBinder(): IBinder? = helperServiceBinder()
+
+    /** One line per change of transport — the daemon is resolved on every reconnect. */
+    private fun noteSource(source: String) {
+        if (lastSource == source) return
+        lastSource = source
+        Log.i(TAG, "binder source: $source")
     }
 
     companion object {
@@ -929,6 +1033,11 @@ open class HelperClientImpl @Inject constructor() : HelperClient {
          *  the joined string. 4.5 s matches RAISE_TIMEOUT_MS (same cold-DiLink baseline); no mutex
          *  is held during this call so the budget can be generous. Applied PER chunk transact. */
         private const val DUMP_FIDS_TIMEOUT_MS = 4_500L
+
+        /** TX_LIST_DISPLAYS budget: one `dumpsys display` under the daemon's own 4 s bound,
+         *  plus marshalling. Runs inside a projection attempt, so it must not sit on the
+         *  default 2 s and report "no cluster display" on a merely slow head unit. */
+        private const val LIST_DISPLAYS_TIMEOUT_MS = 5_000L
 
         /** Safety cap on the number of TX_DUMP_FIDS loop iterations (chunks). 64 × 64 KiB = 4 MiB,
          *  far above any realistic SDK catalog size; guards against a misbehaving daemon. */

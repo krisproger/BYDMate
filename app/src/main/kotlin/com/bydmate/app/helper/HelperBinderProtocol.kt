@@ -32,6 +32,11 @@ import com.bydmate.app.BuildConfig
  *   TX_LAUNCH_AND_FORCE : writeString(packageName), writeInt(displayId), writeInt(width), writeInt(height)
  *       -> reply: writeInt(status), writeInt(0)           // status 0 = redirection completed
  *   TX_ENABLE_ACCESSIBILITY : (no args)                   -> reply: writeInt(status), writeInt(0)  // status 0 = our a11y service enabled
+ *   TX_RECOVER_ACCESSIBILITY : (no args)                  -> reply: writeInt(status), writeInt(0)  // status 0 = re-enabled after force-stop
+ *   TX_CLUSTER_DISPLAY_DIAG : (no args)                   -> reply: writeInt(status), writeInt(0)  // 0 = snapshot thread started, 1 = already ran this daemon lifetime; snapshot is async
+ *       Side effect only: read-only cluster-display diagnostics logged under tag bydmate_helper.
+ *       The caller normally never receives this reply: the daemon force-stops the calling
+ *       package as the first step, so the client's binder call dies with its process.
  *   TX_PUT_GLOBAL_SETTING : writeString(key), writeInt(value)
  *       -> reply: writeInt(status), writeInt(0)   // status 0 = settings put global succeeded; -1 = not whitelisted / failed
  *   TX_SET_APP_HIDDEN : writeString(packageName), writeInt(hidden: 1=disable 0=enable)
@@ -69,6 +74,27 @@ object HelperBinderProtocol {
     const val SERVICE_NAME = "bydmate_helper"
     const val PROCESS_NAME = "bydmate_helper"   // app_process --nice-name + ps lookup
     const val DESCRIPTOR = "com.bydmate.app.helper.IHelper"
+
+    /**
+     * Broadcast delivery of the daemon's IBinder — the H2 fallback for firmwares where
+     * ServiceManager.addService is refused for the shell domain (qti/trinket, DiLink 3.0,
+     * #64/#148). Same channel D+ (aps_diplus) uses on those cars: the daemon never registers
+     * a service name, it hands its Binder to the app in a broadcast extra.
+     *
+     * The receiver must stay exported (the sender is the shell uid, not us), so the app
+     * authenticates the intent by three independent facts: the spawn token it generated for
+     * THIS spawn, the binder's interface descriptor, and — afterwards — the version the daemon
+     * reports over TX_GET_VERSION.
+     */
+    const val ACTION_BINDER = "com.bydmate.app.helper.BINDER"
+    const val RECEIVER_CLASS = "com.bydmate.app.helper.HelperBinderReceiver"
+
+    /** Extras of [ACTION_BINDER]: one Bundle (a Binder cannot be an Intent extra directly). */
+    const val EXTRA_BUNDLE = "helper"
+    const val KEY_BINDER = "binder"
+    const val KEY_TOKEN = "token"
+    const val KEY_VERSION = "version"   // Long — BuildConfig.VERSION_CODE of the spawning APK
+    const val KEY_PID = "pid"
 
     const val TX_PING = IBinder.FIRST_CALL_TRANSACTION       // 1
     const val TX_READ = IBinder.FIRST_CALL_TRANSACTION + 1   // 2
@@ -270,6 +296,47 @@ object HelperBinderProtocol {
      * the split engine reads as "daemon outdated" and falls back to the move-to-fullscreen-root path.
      */
     val TX_SPLIT37_CHANGE_MODE: Int = IBinder.FIRST_CALL_TRANSACTION + 38    // 39
+
+    /**
+     * Recovers the steering-wheel accessibility service on Android 10 (DiLink 3.0/4.0) after the
+     * firmware's quickboot force-stop at ignition off: AccessibilityManagerService parks our
+     * component in UserState.mBindingServices and skips it on every settings rewrite, so
+     * TX_ENABLE_ACCESSIBILITY reports success while the framework never binds. The daemon
+     * force-stops com.bydmate.app (PackageMonitor.onHandleForceStop is the only in-framework path
+     * that clears mBindingServices), re-enables the service and restarts our foreground service.
+     *
+     * (no args) -> [int status (0 = re-enabled, -1 = failed), int 0]
+     * The caller normally never sees the reply: its own process is force-stopped mid-call, so a
+     * timeout / dead binder is the expected outcome, not an error.
+     */
+    val TX_RECOVER_ACCESSIBILITY: Int = IBinder.FIRST_CALL_TRANSACTION + 39  // 40
+
+    /**
+     * Read-only diagnostic snapshot for cars where the cluster projection display never resolves
+     * (DiLink 3/4, issue #182): firmware props, the display lists of DisplayManager and
+     * SurfaceFlinger, the projection-related services and which SurfaceControl methods exist under
+     * shell uid. Collection only — no auto_container command, no SurfaceControl invocation, no
+     * settings write. The output goes to logcat under the `bydmate_helper` tag the app's log
+     * recorder already captures, so an ordinary user log carries it.
+     *
+     * (no args) -> [int status (0 = snapshot logged, -1 = failed), int 0]
+     */
+    val TX_CLUSTER_DISPLAY_DIAG: Int = IBinder.FIRST_CALL_TRANSACTION + 40  // 41
+
+    /**
+     * Full display inventory read out of `dumpsys display` under shell uid (issue #194).
+     * The projection needs it on firmwares where BYD whitelisted DisplayManager per app and the
+     * app uid sees display 0 only, so [com.bydmate.app.cluster.ClusterProjectionManager]'s own
+     * lookup finds no cluster surface. Read-only: one dumpsys, nothing is written or invoked.
+     * Synchronous and not rate-limited (unlike TX_CLUSTER_DISPLAY_DIAG, which spawns a whole
+     * snapshot): the caller needs the answer inside one projection attempt.
+     *
+     * (no args) -> [int status (0 = ok, -1 = failed), int count, then per display:
+     *   int displayId, String name, int width, int height, int densityDpi,
+     *   String ownerPkg ("" when none), int ownerUid (-1 when none),
+     *   String flags (comma-separated, "" when none)]
+     */
+    val TX_LIST_DISPLAYS: Int = IBinder.FIRST_CALL_TRANSACTION + 41  // 42
 
     /** Status codes of the TX_SPLIT37_* verbs. Distinct from the (status, value) autoservice
      *  convention: 2 says the firmware has no native split surface at all (methods absent on the

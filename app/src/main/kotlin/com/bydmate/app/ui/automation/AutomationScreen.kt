@@ -620,10 +620,18 @@ private fun EditorDialog(
 
                     // Cooldown
                     SettingRow(stringResource(R.string.automation_setting_cooldown)) {
+                        // The field owns its text: binding it to cooldownSeconds.toString() made an
+                        // empty field unrepresentable, so Backspace on the last digit was reverted
+                        // and the caret jumped to the start (#163). Empty commits as 0.
+                        var cooldownText by remember(editing.id) {
+                            mutableStateOf(editing.cooldownSeconds.toString())
+                        }
                         OutlinedTextField(
-                            value = editing.cooldownSeconds.toString(),
+                            value = cooldownText,
                             onValueChange = { v ->
-                                v.toIntOrNull()?.let { sec -> onUpdate { copy(cooldownSeconds = sec) } }
+                                val digits = v.filter { it.isDigit() }
+                                cooldownText = digits
+                                onUpdate { copy(cooldownSeconds = digits.toIntOrNull() ?: 0) }
                             },
                             modifier = Modifier.width(70.dp),
                             colors = OutlinedTextFieldDefaults.colors(
@@ -751,19 +759,21 @@ private fun TriggerRow(
         Text("${index + 1}", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = TextMuted,
             modifier = Modifier.width(16.dp))
 
-        when (trigger.kind) {
-            "place_enter", "place_exit" -> PlaceTriggerControls(trigger, places, onUpdate)
-            "time_of_day" -> TimeOfDayTriggerControls(trigger, onUpdate)
-            "time_range" -> ScheduleTriggerControls(trigger, onUpdate)
-            "service_start" -> ServiceStartTriggerControls()
-            "network_available" -> NetworkAvailableTriggerControls()
-            "button_press" -> ButtonPressTriggerControls(trigger, onUpdate)
-            "steering_key" -> SteeringKeyTriggerControls(trigger, onUpdate)
-            "voice" -> VoiceTriggerControls(trigger, onUpdate)
-            else -> ParamTriggerControls(trigger, onUpdate)
+        // Bounded like ActionRow: wide controls (parameter + operator + value + unit) used to push
+        // the arrows and the delete button past the card edge (#165).
+        Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
+            when (trigger.kind) {
+                "place_enter", "place_exit" -> PlaceTriggerControls(trigger, places, onUpdate)
+                "time_of_day" -> TimeOfDayTriggerControls(trigger, onUpdate)
+                "time_range" -> ScheduleTriggerControls(trigger, onUpdate)
+                "service_start" -> ServiceStartTriggerControls()
+                "network_available" -> NetworkAvailableTriggerControls()
+                "button_press" -> ButtonPressTriggerControls(trigger, onUpdate)
+                "steering_key" -> SteeringKeyTriggerControls(trigger, onUpdate)
+                "voice" -> VoiceTriggerControls(trigger, onUpdate)
+                else -> ParamTriggerControls(trigger, onUpdate)
+            }
         }
-
-        Spacer(Modifier.weight(1f))
 
         ReorderArrows(onMoveUp = onMoveUp, onMoveDown = onMoveDown)
         IconButton(onClick = onDelete, modifier = Modifier.size(24.dp)) {
@@ -1430,7 +1440,7 @@ private fun ParamActionControls(
 }
 
 // Delay option keys — labels are resolved at runtime via stringResource
-private val DELAY_OPTION_MS = listOf(500L, 1000L, 2000L, 3000L, 5000L, 10000L)
+private val DELAY_OPTION_MS = listOf(500L, 1000L, 2000L, 3000L, 5000L, 10000L, 30000L, 60000L)
 
 @Composable
 private fun DelayActionControls(
@@ -1445,13 +1455,17 @@ private fun DelayActionControls(
     val label3s = stringResource(R.string.automation_delay_3s)
     val label5s = stringResource(R.string.automation_delay_5s)
     val label10s = stringResource(R.string.automation_delay_10s)
+    val label30s = stringResource(R.string.automation_delay_30s)
+    val label60s = stringResource(R.string.automation_delay_60s)
     val delayLabels = listOf(
         500L to label0_5s,
         1000L to label1s,
         2000L to label2s,
         3000L to label3s,
         5000L to label5s,
-        10000L to label10s
+        10000L to label10s,
+        30000L to label30s,
+        60000L to label60s
     )
     // Pre-build display names for onClick lambdas (stringResource cannot be called in non-Composable onClick)
     val delayDisplayNames = delayLabels.associate { (ms, lbl) ->

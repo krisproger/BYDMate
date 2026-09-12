@@ -35,6 +35,7 @@ import com.bydmate.app.data.repository.ChargeRepository
 import com.bydmate.app.data.repository.PlaceRepository
 import com.bydmate.app.data.repository.SettingsRepository
 import com.bydmate.app.data.repository.TripRepository
+import com.bydmate.app.service.TrackingService
 import com.bydmate.app.service.UpdateChecker
 import com.bydmate.app.util.CrashLog
 import com.bydmate.app.util.appLocalizedContext
@@ -194,6 +195,8 @@ data class SettingsUiState(
     val customBaseUrl: String = "",
     val customApiKey: String = "",
     val customModel: String = "",
+    /** Raw JSON merged into every request to the custom connection (#167); blank = nothing extra. */
+    val customExtraJson: String = "",
     val primaryConn: String = "openrouter",
     val fallbackConn: String = "",
     val connTestRunning: String? = null,
@@ -240,6 +243,7 @@ class SettingsViewModel @Inject constructor(
     private val ttsEngine: TtsEngine,
     private val voiceController: VoiceController,
     private val seatChannelStore: SeatChannelStore,
+    private val windowChannelStore: com.bydmate.app.data.vehicle.WindowChannelStore,
     private val helperClient: com.bydmate.app.data.vehicle.HelperClient,
     private val helperBootstrap: com.bydmate.app.data.vehicle.HelperBootstrap,
     private val agentOrchestrator: AgentOrchestrator,
@@ -254,6 +258,7 @@ class SettingsViewModel @Inject constructor(
     private val splitSessionManager: com.bydmate.app.split.SplitSessionManager,
     private val splitJournal: com.bydmate.app.split.SplitJournal,
     private val driverMemory: com.bydmate.app.agent.DriverMemory,
+    private val adbRestoreManager: com.bydmate.app.data.autoservice.AdbRestoreManager,
 ) : ViewModel() {
 
     private val _appLanguage = MutableStateFlow(localePreferences.getLanguage() ?: "ru")
@@ -421,6 +426,7 @@ class SettingsViewModel @Inject constructor(
             val customBaseUrl = settingsRepository.getString(SettingsRepository.KEY_CUSTOM_BASE_URL, "")
             val customApiKey = settingsRepository.getString(SettingsRepository.KEY_CUSTOM_API_KEY, "")
             val customModel = settingsRepository.getString(SettingsRepository.KEY_CUSTOM_MODEL, "")
+            val customExtraJson = settingsRepository.getString(SettingsRepository.KEY_CUSTOM_EXTRA_JSON, "")
             val primaryConn = settingsRepository.getString(SettingsRepository.KEY_AGENT_PRIMARY_CONN, "openrouter")
             val fallbackConn = settingsRepository.getString(SettingsRepository.KEY_AGENT_FALLBACK_CONN, "")
 
@@ -482,6 +488,7 @@ class SettingsViewModel @Inject constructor(
                     customBaseUrl = customBaseUrl,
                     customApiKey = customApiKey,
                     customModel = customModel,
+                    customExtraJson = customExtraJson,
                     primaryConn = primaryConn,
                     fallbackConn = fallbackConn,
                 )
@@ -844,6 +851,7 @@ class SettingsViewModel @Inject constructor(
     fun saveCustomBaseUrl(value: String) = saveConnField(value, SettingsRepository.KEY_CUSTOM_BASE_URL) { s, v -> s.copy(customBaseUrl = v, customModelList = emptyList(), customModelsError = null) }
     fun saveCustomApiKey(value: String) = saveConnField(value, SettingsRepository.KEY_CUSTOM_API_KEY) { s, v -> s.copy(customApiKey = v) }
     fun saveCustomModel(value: String) = saveConnField(value, SettingsRepository.KEY_CUSTOM_MODEL) { s, v -> s.copy(customModel = v) }
+    fun saveCustomExtraJson(value: String) = saveConnField(value, SettingsRepository.KEY_CUSTOM_EXTRA_JSON) { s, v -> s.copy(customExtraJson = v) }
 
     private fun saveConnField(
         value: String,
@@ -1586,6 +1594,14 @@ class SettingsViewModel @Inject constructor(
                 appendLine("data_source: $dataSource")
                 appendLine("battery_capacity: raw=\"$capacityRaw\" parsed=$capacityParsed")
                 appendLine("abrp_enabled: $abrpEnabled token_len=$abrpTokenLen car_model=\"$abrpCarModel\"")
+                val secureSettingsGranted = appContext.checkSelfPermission(
+                    android.Manifest.permission.WRITE_SECURE_SETTINGS
+                ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+                appendLine(
+                    "adb_restore=${adbRestoreManager.isEnabled()}/${adbRestoreManager.state.value} " +
+                        "trigger=${adbRestoreManager.lastTrigger} retries=${adbRestoreManager.retryCount} " +
+                        "write_secure_settings=$secureSettingsGranted"
+                )
             } catch (e: Exception) {
                 appendLine("(failed to gather settings: ${e.message})")
             }
@@ -1609,6 +1625,17 @@ class SettingsViewModel @Inject constructor(
                 }
             } catch (e: Exception) {
                 appendLine("(failed to gather charging catch-up state: ${e.message})")
+            }
+
+            // Live poll snapshot (#64: DiLink 3.0 park/gear triggers cannot be diagnosed
+            // without the raw gear value; nothing else in the dump or the log carries it).
+            appendLine("--- live snapshot ---")
+            val live = TrackingService.lastData.value
+            if (live == null) {
+                appendLine("(no poll yet)")
+            } else {
+                val ageS = (System.currentTimeMillis() - TrackingService.lastDataAtMs) / 1000
+                appendLine("age_s=$ageS gear=${live.gear} speed=${live.speed} powerState=${live.powerState} soc=${live.soc}")
             }
 
             appendLine("--- vehicle data sources ---")
@@ -1735,9 +1762,13 @@ class SettingsViewModel @Inject constructor(
                 // bounds that fall outside the visible zone.
                 val dm = appContext.getSystemService(Context.DISPLAY_SERVICE)
                     as android.hardware.display.DisplayManager
-                val clusterDisplay = dm.displays.filter {
+                val preferFullDisplay = cpm.isPreferFullDisplay(appContext)
+                val projectionDisplays = dm.displays.filter {
                     it.name.contains("XDJAScreenProjection", ignoreCase = true)
-                }.let { p -> p.firstOrNull { it.name.endsWith("_1") } ?: p.firstOrNull() }
+                }
+                val pickedName = com.bydmate.app.cluster.pickProjectionDisplayName(
+                    projectionDisplays.map { it.name }, preferFullDisplay)
+                val clusterDisplay = projectionDisplays.firstOrNull { it.name == pickedName }
                 if (clusterDisplay == null) {
                     appendLine("display: (no XDJAScreenProjection surface on this car)")
                     appendLine("bounds: n/a")
@@ -1748,6 +1779,7 @@ class SettingsViewModel @Inject constructor(
                     @Suppress("DEPRECATION") clusterDisplay.getMetrics(metrics)
                     appendLine("display: id=${clusterDisplay.displayId} \"${clusterDisplay.name}\" " +
                         "${size.x}x${size.y} dpi=${metrics.densityDpi}")
+                    appendLine("display_pref: " + if (preferFullDisplay) "full" else "mini")
                     val geo = com.bydmate.app.cluster.geometryFor(
                         com.bydmate.app.cluster.ClusterMode.FULLSCREEN, size.x, size.y,
                         clusterPrefs.getInt(cpm.KEY_WIDTH_PCT, com.bydmate.app.cluster.MAX_PROJECTION_PCT),
@@ -1759,6 +1791,26 @@ class SettingsViewModel @Inject constructor(
                         "[${geo.xOffset},${geo.yOffset},${geo.xOffset + geo.width},${geo.yOffset + geo.height}] " +
                             "scale=${clusterPrefs.getInt(cpm.KEY_SCALE_PCT, com.bydmate.app.cluster.DEFAULT_SCALE_PCT)}%")
                 }
+                // #194: the inventory the daemon reads under shell uid. On firmwares that hide
+                // displays from the app uid (DiLink 4.0) the cluster surface appears ONLY here,
+                // and "target" says which of the two lookups the projection would use.
+                val daemonDisplays = runCatching { helperClient.listDisplays() }.getOrNull()
+                appendLine("daemon displays: " + when {
+                    daemonDisplays == null -> "(unavailable)"
+                    daemonDisplays.isEmpty() -> "(none)"
+                    else -> daemonDisplays.joinToString {
+                        "${it.id}:\"${it.name}\" ${it.width}x${it.height} " +
+                            "[${it.flags.joinToString(",")}]"
+                    }
+                })
+                val daemonPick = daemonDisplays?.let {
+                    com.bydmate.app.cluster.pickClusterFromDaemon(it, preferFullDisplay)
+                }
+                appendLine("target: " + when {
+                    clusterDisplay != null -> "app"
+                    daemonPick != null -> "daemon (id=${daemonPick.id})"
+                    else -> "none"
+                })
                 val clusterJournal = cpm.journalLines(appContext)
                 appendLine("journal:")
                 if (clusterJournal.isEmpty()) appendLine("  (empty)")
@@ -1835,6 +1887,13 @@ class SettingsViewModel @Inject constructor(
             appendLine("--- helper daemon ---")
             try {
                 appendLine("alive: ${helperDiag.alive?.toString() ?: "(unknown — probe timed out)"}")
+                // How the daemon is reachable: a registered service name, or the Binder it
+                // broadcast to us on firmwares that refuse addService (#64/#148).
+                val registered = com.bydmate.app.data.vehicle.helperServiceBinder() != null
+                appendLine("transport: " + if (registered) "servicemanager"
+                    else com.bydmate.app.helper.HelperBinderHolder.transport)
+                appendLine("broadcast_last_reject: " +
+                    (com.bydmate.app.helper.HelperBinderHolder.lastReject ?: "(none)"))
                 val failure = helperBootstrap.lastSpawnFailure()
                 if (failure == null) {
                     appendLine("last_spawn_failure: (none)")
@@ -1897,6 +1956,10 @@ class SettingsViewModel @Inject constructor(
                     splitLines.forEach { appendLine("  $it") }
                 }
             } catch (e: Exception) { appendLine("(failed to gather split state: ${e.message})") }
+
+            appendLine("--- windows ---")
+            // Which write channel this firmware ended up on (#79): percent fids or CTRL.
+            appendLine("window channel: ${windowChannelStore.winner()}")
 
             appendLine("--- seats ---")
             SeatsDiagnostics.format(helperDiag.seats).forEach { appendLine(it) }

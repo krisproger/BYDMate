@@ -78,6 +78,7 @@ class SettingsViewModelTest {
 
     private val testDispatcher = StandardTestDispatcher()
     private val seatChannelStore: SeatChannelStore = mockk(relaxed = true)
+    private val windowChannelStore: com.bydmate.app.data.vehicle.WindowChannelStore = mockk(relaxed = true)
     private val helperClient: HelperClient = mockk(relaxed = true)
     // relaxed → ensureRunning() defaults to false; tests that need the daemon "up" stub it true.
     private val helperBootstrap: HelperBootstrap = mockk(relaxed = true)
@@ -203,7 +204,8 @@ class SettingsViewModelTest {
         override suspend fun isConnected(): Boolean = false
         override suspend fun exec(cmd: String): String? = null
         override suspend fun grantUsageStatsAppop(packageName: String): Boolean = false
-        override suspend fun spawnHelper(): Boolean = false
+        override suspend fun grantWriteSecureSettings(packageName: String): Boolean = false
+        override suspend fun spawnHelper(token: String): Boolean = false
         override suspend fun killHelper(): Boolean = false
         override suspend fun readHelperLog(): String? = null
         override suspend fun helperHeartbeat(): Boolean = false
@@ -280,6 +282,7 @@ class SettingsViewModelTest {
             ttsEngine = resolvedTtsEngine,
             voiceController = voiceController,
             seatChannelStore = seatChannelStore,
+            windowChannelStore = windowChannelStore,
             helperClient = helperClient,
             helperBootstrap = helperBootstrap,
             agentOrchestrator = agentOrchestrator,
@@ -298,6 +301,11 @@ class SettingsViewModelTest {
             splitJournal = com.bydmate.app.split.NoSplitJournal,
             driverMemory = com.bydmate.app.agent.DriverMemory(
                 ctx.getSharedPreferences("voice", Context.MODE_PRIVATE)
+            ),
+            adbRestoreManager = com.bydmate.app.data.autoservice.AdbRestoreManager(
+                com.bydmate.app.data.autoservice.AdbRestorePreferencesImpl(ctx),
+                mockk(relaxed = true),
+                kotlinx.coroutines.test.TestScope(),
             ),
         )
     }

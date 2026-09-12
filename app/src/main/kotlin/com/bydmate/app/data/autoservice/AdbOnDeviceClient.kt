@@ -39,6 +39,15 @@ interface AdbOnDeviceClient {
     suspend fun grantUsageStatsAppop(packageName: String): Boolean
 
     /**
+     * Grants WRITE_SECURE_SETTINGS to our own package via shell uid, so the app can turn
+     * Android's wireless debugging back on after a reboot on firmwares that no longer keep
+     * port 5555 open (see AdbRestoreManager). Granted while the classic port is still alive,
+     * regardless of whether the restore toggle is on — afterwards there is no channel left
+     * to grant it through. Idempotent. Returns true on success.
+     */
+    suspend fun grantWriteSecureSettings(packageName: String): Boolean
+
+    /**
      * Spawns the helper daemon under shell uid via app_process, using the app's
      * own signed base.apk as CLASSPATH (no dex push — integrity comes from the
      * APK signature). The daemon registers itself as the `bydmate_helper` binder
@@ -49,8 +58,13 @@ interface AdbOnDeviceClient {
      * Hardcoded cmdline + process name — caller cannot inject. Uses the raw
      * protocol exec path (the public exec() write barrier only permits autoservice
      * GETs and would reject this).
+     *
+     * [token] is the spawn token the daemon echoes back when it has to publish its Binder by
+     * broadcast (#64/#148). It lands in a shell command line, so it is validated to be
+     * alphanumeric — an ill-formed token throws IllegalArgumentException rather than being
+     * quoted away.
      */
-    suspend fun spawnHelper(): Boolean
+    suspend fun spawnHelper(token: String): Boolean
 
     /**
      * Kills any running helper daemon (by exact nice-name) under shell uid, so a fresh
@@ -84,7 +98,10 @@ class AdbOnDeviceClientImpl @Inject constructor(
      */
     @Suppress("unused")  // assigned via internal setter from tests
     internal var protocolFactory: () -> AdbProtocol = {
-        AdbProtocolClient(keyStore.loadOrGenerate())
+        AdbProtocolClient(
+            keyPair = keyStore.loadOrGenerate(),
+            certificateProvider = { keyStore.loadOrGenerateCertificate() },
+        )
     }
 
     @Volatile private var protocol: AdbProtocol? = null
@@ -146,7 +163,33 @@ class AdbOnDeviceClientImpl @Inject constructor(
         }
     }
 
-    override suspend fun spawnHelper(): Boolean = withContext(Dispatchers.IO) {
+    override suspend fun grantWriteSecureSettings(packageName: String): Boolean = withContext(Dispatchers.IO) {
+        // Only permit our own package — never grant permissions to anything else.
+        require(packageName.matches(PACKAGE_NAME_REGEX)) {
+            "grantWriteSecureSettings: refused package $packageName"
+        }
+        val cmd = "pm grant $packageName android.permission.WRITE_SECURE_SETTINGS"
+        val p = protocol ?: return@withContext false
+        try {
+            // pm prints nothing on success (and on a re-grant); any output is an error.
+            val out = p.exec(cmd)
+            if (out == null) {
+                Log.w(TAG, "grantWriteSecureSettings: transport error")
+                return@withContext false
+            }
+            if (out.isNotBlank()) Log.w(TAG, "grantWriteSecureSettings: pm answered: ${out.trim().take(300)}")
+            out.isBlank()
+        } catch (e: Exception) {
+            Log.w(TAG, "grantWriteSecureSettings failed: ${e.message}")
+            false
+        }
+    }
+
+    override suspend fun spawnHelper(token: String): Boolean = withContext(Dispatchers.IO) {
+        // The token is interpolated into a shell command line — nothing but [A-Za-z0-9] may
+        // reach it. Callers build it themselves (HelperBootstrap), so this is a programming
+        // error, not a runtime condition.
+        require(token.matches(SPAWN_TOKEN_REGEX)) { "spawnHelper: refused token" }
         val p = protocol ?: run {
             val r = connect()
             if (r.isFailure) return@withContext false
@@ -162,11 +205,19 @@ class AdbOnDeviceClientImpl @Inject constructor(
             // — without the loop the still-booting JVM dies before its first println
             // (empty log, no registration). Mirrors the proven BYD EV Pro / aps_diplus
             // spawn recipe; see reference_autoservice_write_channel.md.
+            // The loop also breaks on READY in the daemon log: a daemon that had to publish
+            // its Binder by broadcast (#64/#148) never appears in `service list`, and without
+            // this second condition every spawn on such a firmware would burn the full 3s.
+            // The log is truncated in THIS shell first: the background job's own `>` truncation
+            // happens after the fork, so the loop could otherwise read the previous daemon's
+            // READY line and break before the new one has printed anything.
             val spawnCmd =
+                ": >$HELPER_LOG_PATH; " +
                 "CLASSPATH=${ctx.packageCodePath} setsid app_process /system/bin " +
                 "--nice-name=$HELPER_PROCESS_NAME com.bydmate.app.helper.HelperDaemon " +
-                "${android.os.Process.myUid()} </dev/null >$HELPER_LOG_PATH 2>&1 & " +
-                "for i in 1 2 3; do service list 2>/dev/null | grep -q $HELPER_PROCESS_NAME && break; sleep 1; done"
+                "${android.os.Process.myUid()} $token </dev/null >$HELPER_LOG_PATH 2>&1 & " +
+                "for i in 1 2 3; do { service list 2>/dev/null | grep -q $HELPER_PROCESS_NAME || " +
+                "grep -q READY $HELPER_LOG_PATH 2>/dev/null; } && break; sleep 1; done"
             // exec() returns null only on a dead/disconnected socket (AdbProtocolClient.exec) — an
             // honest false here matters: HelperBootstrap.ensureRunningLocked() persists the spawned
             // versionCode ONLY after a dispatch that actually succeeded, and bails otherwise.
@@ -229,8 +280,12 @@ class AdbOnDeviceClientImpl @Inject constructor(
         // Rejects tx=6 (setInt), tx=8 (setBuffer), and arbitrary shell.
         private val WRITE_BARRIER_REGEX = Regex("""^service call autoservice [579] i32 \d+ i32 -?\d+$""")
 
-        // Narrow whitelist for grantUsageStatsAppop — only our own package.
+        // Narrow whitelist for the two self-grants — only our own package.
         private val PACKAGE_NAME_REGEX = Regex("""^com\.bydmate\.app$""")
+
+        // Spawn token shape — alphanumeric only, so it can never break out of the spawn
+        // command line. HelperBootstrap generates 32 hex characters.
+        private val SPAWN_TOKEN_REGEX = Regex("""^[A-Za-z0-9]{16,64}$""")
 
         // Helper daemon — hardcoded so neither caller can inject paths/cmdlines.
         private const val HELPER_PROCESS_NAME = "bydmate_helper"
